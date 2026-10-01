@@ -1,0 +1,7 @@
+# Runtime dependencies of ImgForge (Python 3.11+)
+PySide6>=6.8
+Pillow>=11.3            # native AVIF support since 11.3
+pillow-heif>=0.18       # HEIC / HEIF input
+imagequant>=1.1         # libimagequant: lossy PNG palette quantization
+pyoxipng>=9.0           # lossless PNG optimization
+mozjpeg-lossless-optimization>=1.1   # mozjpeg progressive / Huffman optimization

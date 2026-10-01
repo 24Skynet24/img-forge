@@ -1,0 +1,54 @@
+name: Build exe
+
+# Builds the portable ImgForge.exe. Push a tag like v1.0.0 to also publish it as a GitHub release,
+# or run the workflow manually to get the exe as a build artifact.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest
+
+      - name: Build exe
+        run: pyinstaller build.spec --noconfirm
+
+      - name: Self-test the built exe
+        shell: pwsh
+        run: |
+          $proc = Start-Process -FilePath dist\ImgForge.exe -ArgumentList '--selftest', 'selftest.txt' -Wait -PassThru
+          Get-Content selftest.txt
+          if ($proc.ExitCode -ne 0) { throw "Self-test failed (exit code $($proc.ExitCode))" }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ImgForge-windows
+          path: dist/ImgForge.exe
+          if-no-files-found: error
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/ImgForge.exe
+          generate_release_notes: true
