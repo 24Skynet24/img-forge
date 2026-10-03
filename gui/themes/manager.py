@@ -4,9 +4,8 @@ from __future__ import annotations
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import QApplication
 
-from gui.themes.icons import arrow_icon_urls
 from gui.themes.stylesheet import build_palette, build_stylesheet
-from gui.themes.tokens import DARK, LIGHT, Tokens
+from gui.themes.tokens import DARK, LIGHT, Tokens, set_current
 
 SYSTEM, LIGHT_THEME, DARK_THEME = "system", "light", "dark"
 PREFERENCES = (SYSTEM, LIGHT_THEME, DARK_THEME)
@@ -59,8 +58,9 @@ class ThemeManager(QObject):
             dark = self._preference == DARK_THEME
         tokens = DARK if dark else LIGHT
         self._tokens = tokens
+        set_current(tokens)  # custom-painted widgets read the active tokens while repainting
         self._app.setPalette(build_palette(tokens))
-        self._app.setStyleSheet(build_stylesheet(tokens, *arrow_icon_urls(tokens)))
+        self._app.setStyleSheet(build_stylesheet(tokens))
         self.changed.emit(tokens)
 
     def _on_system_scheme_changed(self, _scheme: Qt.ColorScheme) -> None:

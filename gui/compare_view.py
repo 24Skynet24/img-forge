@@ -7,7 +7,6 @@ from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import (
     QBrush,
     QColor,
-    QFont,
     QImage,
     QKeyEvent,
     QMouseEvent,
@@ -20,7 +19,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
     QLabel,
-    QPushButton,
     QVBoxLayout,
     QWidget,
 )
@@ -28,7 +26,9 @@ from PySide6.QtWidgets import (
 from core.formats import format_info
 from core.models import FileResult
 from core.utils import format_size
+from gui.themes.fonts import font
 from gui.themes.tokens import Tokens
+from gui.widgets.kit import Btn
 from gui.workers import ImageLoadWorker
 
 _GRAB = 12  # px around the split line that grab the handle
@@ -276,39 +276,35 @@ class CompareView(QWidget):
         p.drawImage(area, level, source)
 
     def _draw_split(self, p: QPainter, x: float) -> None:
-        accent = QColor(self._tokens.accent)
+        t = self._tokens
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        ix = round(x)
+        p.fillRect(ix - 2, 0, 4, self.height(), QColor(t.panel))
+        p.fillRect(ix - 1, 0, 2, self.height(), QColor(t.ink))
+        cy = self.height() // 2
+        handle = QRectF(ix - 15, cy - 15, 30, 30)
+        p.fillRect(handle.adjusted(-2, -2, 2, 2), QColor(t.panel))
+        p.fillRect(handle, QColor(t.violet))
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        p.setPen(QPen(QColor(0, 0, 0, 90), 3))
-        p.drawLine(QPointF(x, 0), QPointF(x, self.height()))
-        p.setPen(QPen(QColor("#ffffff"), 1.5))
-        p.drawLine(QPointF(x, 0), QPointF(x, self.height()))
-        cy = self.height() / 2
-        p.setPen(QPen(QColor("#ffffff"), 2))
-        p.setBrush(accent)
-        p.drawEllipse(QPointF(x, cy), 15, 15)
-        p.setPen(QPen(QColor("#ffffff"), 2.2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        p.setPen(QPen(QColor("#ffffff"), 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.SquareCap))
         for sign in (-1, 1):  # two small arrows ◀ ▶
-            tip = x + sign * 8
+            tip = ix + sign * 8
             p.drawLine(QPointF(tip, cy), QPointF(tip - sign * 4, cy - 4))
             p.drawLine(QPointF(tip, cy), QPointF(tip - sign * 4, cy + 4))
 
     def _draw_badges(self, p: QPainter, split: float) -> None:
-        font = QFont(self.font())
-        font.setBold(True)
-        font.setPointSizeF(max(8.0, font.pointSizeF() - 1))
-        p.setFont(font)
+        p.setFont(font(10, 700, spacing=0.1))
         metrics = p.fontMetrics()
         for text, left in ((self._labels[0], True), (self._labels[1], False)):
+            text = text.upper()
             w = metrics.horizontalAdvance(text) + 20
-            h = metrics.height() + 10
+            h = metrics.height() + 8
             x = 12.0 if left else self.width() - w - 12.0
             if left and x + w > split - 6 or (not left and x < split + 6):
                 continue  # not enough room next to the divider
             rect = QRectF(x, 12, w, h)
-            p.setPen(Qt.PenStyle.NoPen)
-            p.setBrush(QColor(0, 0, 0, 150))
-            p.drawRoundedRect(rect, h / 2, h / 2)
-            p.setPen(QColor("#ffffff"))
+            p.fillRect(rect, QColor(self._tokens.ink))
+            p.setPen(QColor(self._tokens.inv))
             p.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
 
 
@@ -345,12 +341,12 @@ class CompareDialog(QDialog):
         info.addWidget(left, 1)
         info.addWidget(right, 1)
 
-        fit = QPushButton("По размеру окна")
-        actual = QPushButton("100%")
-        centre = QPushButton("Разделитель по центру")
+        fit = Btn("По размеру окна")
+        actual = Btn("100%")
+        centre = Btn("Разделитель по центру")
         self._zoom_label = QLabel("100%")
         self._zoom_label.setMinimumWidth(56)
-        close = QPushButton("Закрыть")
+        close = Btn("Закрыть", "✕")
         fit.clicked.connect(self._view.fit)
         actual.clicked.connect(self._view.actual_size)
         centre.clicked.connect(self._view.reset_split)

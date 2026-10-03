@@ -8,10 +8,9 @@ import threading
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QModelIndex, QPoint, QSize, Qt, QTimer, QUrl
+from PySide6.QtCore import QModelIndex, QPoint, Qt, QTimer, QUrl
 from PySide6.QtGui import (
     QAction,
-    QActionGroup,
     QCloseEvent,
     QDesktopServices,
     QDragEnterEvent,
@@ -19,59 +18,93 @@ from PySide6.QtGui import (
     QDropEvent,
     QIcon,
     QKeySequence,
+    QPainter,
 )
 from PySide6.QtWidgets import (
-    QAbstractItemView,
     QFileDialog,
-    QFrame,
     QHBoxLayout,
-    QHeaderView,
-    QLabel,
     QMainWindow,
     QMenu,
     QMessageBox,
-    QProgressBar,
-    QPushButton,
+    QScrollArea,
     QStackedWidget,
-    QTableView,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from core.formats import INPUT_EXTENSIONS
-from core.models import FileResult, summarize
-from core.options import ProcessingOptions
+from core.models import FileResult, Summary, summarize
+from core.options import Mode, ProcessingOptions, QualityLevel
 from core.pipeline import BatchOutcome
 from core.report import format_log
 from core.saver import SaveEntry, SaveReport
 from core.scanner import ScanResult
-from core.utils import format_duration, format_size
+from core.utils import format_duration, format_size, plural
+from gui import frameless
 from gui.compare_view import CompareDialog
 from gui.settings import AppSettings
-from gui.themes.manager import DARK_THEME, LIGHT_THEME, SYSTEM, ThemeManager
+from gui.themes.manager import ThemeManager
 from gui.widgets.conflict_dialog import ConflictDialog
-from gui.widgets.drop_zone import DropZone
-from gui.widgets.queue_model import (
-    COL_FOLDER,
-    COL_FORMAT,
-    COL_NAME,
-    COL_NEW_SIZE,
-    COL_PREVIEW,
-    COL_SAVED,
-    COL_SIZE,
-    QueueModel,
-)
+from gui.widgets.controls import ThemeSwitch
+from gui.widgets.drop_zone import DropStrip, DropZone
+from gui.widgets.kit import Btn, ElidedTx, Header, MarkWidget, Surface, Tx, col, draw_frame
+from gui.widgets.queue_model import QueueModel
+from gui.widgets.queue_view import QueueList
+from gui.widgets.run_panel import RunPanel
 from gui.widgets.settings_panel import SettingsPanel
+from gui.widgets.summary_strip import SummaryStrip
 from gui.widgets.thumbnails import ThumbnailCache
+from gui.widgets.title_bar import TitleBar
 from gui.workers import ProcessWorker, SaveWorker, ScanWorker
 
-THUMB_SIZE = 56
+THUMB_SIZE = 36
+MIN_WIDTH, MIN_HEIGHT = 960, 640  # the designed minimum window size
+_QUALITY_TAGS = {QualityLevel.MAXIMUM: "MAX", QualityLevel.BALANCED: "BAL", QualityLevel.SMALLEST: "MIN"}
+_FILES = ("файл", "файла", "файлов")
 
 
 def _file_filter() -> str:
     patterns = " ".join(f"*{ext}" for ext in sorted(INPUT_EXTENSIONS))
     return f"Изображения ({patterns});;Все файлы (*.*)"
+
+
+class _Readout(Surface):
+    """``SYS.QUEUE / 024 / 214.7 MB`` cell of the top bar."""
+
+    def __init__(self, title: str, width: int, parent: QWidget | None = None) -> None:
+        super().__init__(None, left="line", parent=parent)
+        self.setFixedWidth(width)  # fixed: a changing value must never change the layout
+        self._value = ElidedTx("", 11, 700)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 0, 14, 0)
+        layout.setSpacing(3)
+        layout.addStretch()
+        layout.addWidget(Tx(title, 9, tone="mute", spacing=0.1))
+        layout.addWidget(self._value)
+        layout.addStretch()
+
+    def set_value(self, text: str) -> None:
+        self._value.setText(text)
+
+
+class _StatusDot(QWidget):
+    """8 px square: empty / ink / violet / lime depending on what the app is doing."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setFixedSize(8, 8)
+        self._fill: str | None = None
+
+    def set_fill(self, token: str | None) -> None:
+        self._fill = token
+        self.update()
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        p = QPainter(self)
+        if self._fill:
+            p.fillRect(self.rect(), col(self._fill))
+        draw_frame(p, self.rect(), col("ink"))
+        p.end()
 
 
 class MainWindow(QMainWindow):
@@ -84,11 +117,14 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("ImgForge")
         if icon is not None:
             self.setWindowIcon(icon)
+        self.setWindowFlags(
+            Qt.WindowType.Window
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowMinMaxButtonsHint
+            | Qt.WindowType.WindowSystemMenuHint
+        )
         self.setAcceptDrops(True)
-        self.setMinimumSize(1100, 700)
-        self.resize(1240, 800)
-        if settings.geometry is not None:
-            self.restoreGeometry(settings.geometry)
+        self.resize(1240, 830)
 
         # State
         self._work_dir: Path | None = None
@@ -102,6 +138,7 @@ class MainWindow(QMainWindow):
         self._skipped = 0
         self._duplicates = 0
         self._summary_text = ""
+        self._last_summary: Summary | None = None
         self._cancelled = False
         self._done = 0
         self._total = 0
@@ -109,128 +146,182 @@ class MainWindow(QMainWindow):
         self._bytes_total = 0
         self._started_at = 0.0
         self._compare_dialogs: list[CompareDialog] = []
+        self._frame_ready = False
 
         self._thumbs = ThumbnailCache(THUMB_SIZE, parent=self)
-        self._model = QueueModel(self._thumbs, theme.tokens, self)
+        self._model = QueueModel(self._thumbs, self)
 
         self._build_ui()
         self._build_actions()
         self._timer = QTimer(self)
         self._timer.setInterval(500)
         self._timer.timeout.connect(self._tick)
+        self._anim = QTimer(self)
+        self._anim.setInterval(90)
+        self._anim.timeout.connect(self._animate)
         theme.changed.connect(self._on_theme_changed)
+        self._on_settings_changed(save=False)
+        self._on_theme_changed(theme.tokens)
         self._refresh_state()
+        self._fit_minimum_size()
+        if settings.geometry is not None:  # after the UI exists: restoring resizes the window
+            self.restoreGeometry(settings.geometry)
 
     # ================================================================== construction
 
     def _build_ui(self) -> None:
-        root = QWidget()
-        root.setObjectName("root")
+        root = Surface("bg", top="ink", bottom="ink", left="ink", right="ink")
         self.setCentralWidget(root)
 
-        brand = QLabel("ImgForge")
-        brand.setObjectName("brand")
-        self._btn_add_files = QPushButton("Добавить файлы")
-        self._btn_add_folder = QPushButton("Добавить папку")
-        self._btn_clear = QPushButton("Очистить")
-        self._theme_button = QToolButton()
-        self._theme_button.setText("Тема")
-        self._theme_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self._theme_button.setMenu(self._build_theme_menu())
+        self._title = TitleBar()
+        self._title.minimizeRequested.connect(self.showMinimized)
+        self._title.maximizeRequested.connect(self._toggle_maximized)
+        self._title.closeRequested.connect(self.close)
 
-        top = QHBoxLayout()
-        top.addWidget(brand)
-        top.addSpacing(16)
-        top.addWidget(self._btn_add_files)
-        top.addWidget(self._btn_add_folder)
-        top.addWidget(self._btn_clear)
-        top.addStretch()
-        top.addWidget(self._theme_button)
+        # ---- top bar
+        self._btn_add_files = Btn("Добавить файлы", "+")
+        self._btn_add_folder = Btn("Добавить папку", "+")
+        self._btn_clear = Btn("Очистить", "✕", kind="ghost")
 
-        # Queue / results table
-        self._table = QTableView()
-        self._table.setModel(self._model)
-        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self._table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
-        self._table.setAlternatingRowColors(True)
-        self._table.setShowGrid(False)
-        self._table.setWordWrap(False)
-        self._table.setIconSize(QSize(THUMB_SIZE, THUMB_SIZE))
-        self._table.verticalHeader().setVisible(False)
-        self._table.verticalHeader().setDefaultSectionSize(THUMB_SIZE + 10)
-        self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        header = self._table.horizontalHeader()
-        header.setHighlightSections(False)
-        header.setStretchLastSection(True)  # the status column takes the remaining width
-        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        for col, width in (
-            (COL_PREVIEW, THUMB_SIZE + 12), (COL_NAME, 170), (COL_FOLDER, 130), (COL_FORMAT, 104),
-            (COL_SIZE, 80), (COL_NEW_SIZE, 100), (COL_SAVED, 80),
-        ):
-            self._table.setColumnWidth(col, width)
-        header.setSectionResizeMode(COL_PREVIEW, QHeaderView.ResizeMode.Fixed)
+        brand = Surface(None, right="line")
+        brand_layout = QHBoxLayout(brand)
+        brand_layout.setContentsMargins(20, 0, 20, 0)
+        brand_layout.setSpacing(10)
+        brand_layout.addWidget(MarkWidget(22, hole="bg"))
+        brand_layout.addWidget(Tx("IMGFORGE", 21, 600, display=True, spacing=0.03))
+        brand_layout.addSpacing(-10)
+        brand_layout.addWidget(Tx("_", 21, 600, "vtext", display=True))
 
-        self._drop_zone = DropZone(self._theme.tokens)
+        buttons = QWidget()
+        buttons_layout = QHBoxLayout(buttons)
+        buttons_layout.setContentsMargins(16, 0, 16, 0)
+        buttons_layout.setSpacing(8)
+        for button in (self._btn_add_files, self._btn_add_folder, self._btn_clear):
+            buttons_layout.addWidget(button)
+
+        self._ro_queue = _Readout("SYS.QUEUE", 150)
+        self._ro_out = _Readout("OUT.FMT", 112)
+        self._ro_thr = _Readout("THR", 76)
+        self._readouts = QWidget()
+        readouts_layout = QHBoxLayout(self._readouts)
+        readouts_layout.setContentsMargins(0, 0, 0, 0)
+        readouts_layout.setSpacing(0)
+        for readout in (self._ro_queue, self._ro_out, self._ro_thr):
+            readouts_layout.addWidget(readout)
+
+        self._theme_switch = ThemeSwitch()
+        self._theme_switch.chosen.connect(self._set_theme)
+        theme_box = Surface(None, left="line")
+        theme_layout = QHBoxLayout(theme_box)
+        theme_layout.setContentsMargins(16, 0, 16, 0)
+        theme_layout.setSpacing(10)
+        theme_layout.addWidget(Tx("Тема", 10, tone="mute", spacing=0.1, upper=True))
+        theme_layout.addWidget(self._theme_switch)
+
+        top = Surface("bg", bottom="ink")
+        top.setFixedHeight(52)
+        top_layout = QHBoxLayout(top)
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.setSpacing(0)
+        top_layout.addWidget(brand)
+        top_layout.addWidget(buttons)
+        top_layout.addStretch()
+        top_layout.addWidget(self._readouts)
+        top_layout.addWidget(theme_box)
+
+        # ---- queue / results table
+        self._queue = QueueList(self._model)
+        self._table = self._queue.view
+        self._table.removeRequested.connect(self._remove_row)
+
+        self._drop_zone = DropZone()
+        self._summary_strip = SummaryStrip()
+        self._summary_strip.hide()
+        self._drop_strip = DropStrip()
+        self._strip_holder = QWidget()
+        strip_layout = QHBoxLayout(self._strip_holder)
+        strip_layout.setContentsMargins(16, 0, 16, 12)
+        strip_layout.addWidget(self._drop_strip)
+
+        rows_page = QWidget()
+        rows_layout = QVBoxLayout(rows_page)
+        rows_layout.setContentsMargins(0, 0, 0, 0)
+        rows_layout.setSpacing(0)
+        rows_layout.addWidget(self._summary_strip)
+        rows_layout.addWidget(self._queue, 1)
+        rows_layout.addWidget(self._strip_holder)
+
         self._stack = QStackedWidget()
         self._stack.addWidget(self._drop_zone)
-        self._stack.addWidget(self._table)
+        self._stack.addWidget(rows_page)
 
+        self._sources_header = Header("/01", "ИСТОЧНИКИ")
+        header_box = Surface(None, bottom="line")
+        header_box.setFixedHeight(40)
+        header_layout = QHBoxLayout(header_box)
+        header_layout.setContentsMargins(16, 0, 16, 0)
+        header_layout.addWidget(self._sources_header)
+
+        left = Surface("panel", right="ink")
+        left_layout = QVBoxLayout(left)
+        left_layout.setContentsMargins(0, 0, 1, 0)
+        left_layout.setSpacing(0)
+        left_layout.addWidget(header_box)
+        left_layout.addWidget(self._stack, 1)
+
+        # ---- right column: settings (scrolls) + launch block
         self._panel = SettingsPanel(self._settings)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setWidget(self._panel)
+        scroll.viewport().setAutoFillBackground(False)
+        self._run = RunPanel()
+
+        right = Surface("panel")
+        right.setFixedWidth(352)
+        right_layout = QVBoxLayout(right)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(0)
+        right_layout.addWidget(scroll, 1)
+        right_layout.addWidget(self._run)
 
         body = QHBoxLayout()
-        body.setSpacing(14)
-        body.addWidget(self._stack, 1)
-        body.addWidget(self._panel, 0, Qt.AlignmentFlag.AlignTop)
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+        body.addWidget(left, 1)
+        body.addWidget(right)
 
-        # Bottom area
-        self._info = QLabel()
-        self._info.setObjectName("summary")
-        self._info.setWordWrap(True)
-        self._progress = QProgressBar()
-        self._progress.setTextVisible(True)
-        self._progress_text = QLabel()
-        self._progress_text.setProperty("muted", True)
-        self._progress_text.setMinimumWidth(300)
-        self._progress_text.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-
-        self._btn_start = QPushButton("Начать")
-        self._btn_start.setObjectName("primary")
-        self._btn_cancel = QPushButton("Отмена")
-        self._btn_cancel.setObjectName("danger")
-        self._btn_compare = QPushButton("Сравнить")
-        self._btn_save = QPushButton("Сохранить…")
-        self._btn_save.setObjectName("primary")
-        self._btn_open = QPushButton("Открыть папку")
-        self._btn_log = QPushButton("Экспорт лога")
-
-        progress_row = QHBoxLayout()
-        progress_row.addWidget(self._progress, 1)
-        progress_row.addWidget(self._progress_text)
-        actions = QHBoxLayout()
-        actions.addWidget(self._btn_start)
-        actions.addWidget(self._btn_cancel)
-        actions.addWidget(self._btn_compare)
-        actions.addStretch()
-        actions.addWidget(self._btn_log)
-        actions.addWidget(self._btn_open)
-        actions.addWidget(self._btn_save)
-
-        bottom = QFrame()
-        bottom.setObjectName("card")
-        bottom_layout = QVBoxLayout(bottom)
-        bottom_layout.setContentsMargins(16, 12, 16, 12)
-        bottom_layout.addWidget(self._info)
-        bottom_layout.addLayout(progress_row)
-        bottom_layout.addLayout(actions)
+        # ---- status bar
+        self._dot = _StatusDot()
+        self._info = ElidedTx("", 12)
+        self._btn_compare = Btn("Сравнить", "↔", kind="status", height=32, px=11)
+        self._btn_log = Btn("Экспорт лога", "↓", kind="status", height=32, px=11)
+        self._btn_open = Btn("Открыть папку", "↗", kind="status", height=32, px=11)
+        self._btn_save = Btn("Сохранить…", "→", kind="status", height=32, px=11)
+        status = Surface("bg", top="ink")
+        status.setFixedHeight(56)
+        status_layout = QHBoxLayout(status)
+        status_layout.setContentsMargins(16, 12, 12, 12)
+        status_layout.setSpacing(6)
+        status_layout.addWidget(self._dot)
+        status_layout.addSpacing(4)
+        status_layout.addWidget(self._info, 1)
+        for button in (self._btn_compare, self._btn_log, self._btn_open, self._btn_save):
+            status_layout.addWidget(button)
 
         layout = QVBoxLayout(root)
-        layout.setContentsMargins(16, 14, 16, 16)
-        layout.setSpacing(12)
-        layout.addLayout(top)
+        layout.setContentsMargins(1, 1, 1, 1)
+        layout.setSpacing(0)
+        layout.addWidget(self._title)
+        layout.addWidget(top)
         layout.addLayout(body, 1)
-        layout.addWidget(bottom)
+        layout.addWidget(status)
+
+        self._btn_start = self._run.start
+        self._btn_cancel = self._run.cancel
+        self._top_layout = top_layout
 
         # Wiring
         self._btn_add_files.clicked.connect(self.add_files_dialog)
@@ -244,22 +335,11 @@ class MainWindow(QMainWindow):
         self._btn_log.clicked.connect(self.export_log)
         self._drop_zone.addFilesRequested.connect(self.add_files_dialog)
         self._drop_zone.addFolderRequested.connect(self.add_folder_dialog)
+        self._drop_strip.clicked.connect(self.add_files_dialog)
         self._table.doubleClicked.connect(self._on_double_click)
         self._table.customContextMenuRequested.connect(self._context_menu)
         self._table.selectionModel().selectionChanged.connect(lambda *_: self._refresh_state())
         self._panel.changed.connect(self._on_settings_changed)
-
-    def _build_theme_menu(self) -> QMenu:
-        menu = QMenu(self)
-        group = QActionGroup(menu)
-        group.setExclusive(True)
-        for key, label in ((SYSTEM, "Как в Windows"), (LIGHT_THEME, "Светлая"), (DARK_THEME, "Тёмная")):
-            action = QAction(label, menu, checkable=True)
-            action.setChecked(self._theme.preference == key)
-            action.triggered.connect(lambda _=False, k=key: self._set_theme(k))
-            group.addAction(action)
-            menu.addAction(action)
-        return menu
 
     def _build_actions(self) -> None:
         def make(text: str, shortcuts: list[str], slot, owner: QWidget | None = None) -> QAction:
@@ -281,6 +361,58 @@ class MainWindow(QMainWindow):
         self._btn_save.setToolTip("Ctrl+S")
         self._btn_clear.setToolTip("Очистить очередь")
 
+    # ================================================================== frameless window
+
+    def _toggle_maximized(self) -> None:
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        if not self._frame_ready:
+            self._frame_ready = True
+            frameless.enable_native_frame(self)
+
+    def changeEvent(self, event) -> None:  # noqa: N802
+        super().changeEvent(event)
+        if event.type() == event.Type.WindowStateChange:
+            self._title.set_maximized(self.isMaximized())
+
+    def _fit_minimum_size(self) -> None:
+        """Window minimum = what the layout needs (never squeezed), but at least the designed 960 × 640.
+
+        The top-bar readouts are optional: they are shown only when there is room for them, so the
+        minimum is measured without them.
+        """
+        self._readouts.hide()
+        layout = self.centralWidget().layout()
+        layout.activate()
+        need = layout.minimumSize()
+        self.setMinimumSize(max(MIN_WIDTH, need.width()), max(MIN_HEIGHT, need.height()))
+        self._readouts_extra = self._readouts.sizeHint().width()
+        self._readouts.setVisible(self.width() >= need.width() + self._readouts_extra)
+        self._compact_need = need.width()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if hasattr(self, "_compact_need"):
+            show = self.width() >= self._compact_need + self._readouts_extra
+            if show != self._readouts.isVisibleTo(self):
+                self._readouts.setVisible(show)
+
+    def _in_caption(self, pos: QPoint) -> bool:
+        local = self._title.mapFrom(self, pos)
+        return self._title.rect().contains(local) and self._title.is_caption_at(local)
+
+    def nativeEvent(self, event_type, message):  # noqa: N802
+        if event_type == b"windows_generic_MSG":
+            handled = frameless.handle_native_event(self, message, self._in_caption)
+            if handled is not None:
+                return handled
+        return super().nativeEvent(event_type, message)
+
     # ================================================================== state
 
     @property
@@ -298,7 +430,7 @@ class MainWindow(QMainWindow):
         busy = self.running or self.saving
         self._stack.setCurrentIndex(1 if has_items else 0)
         self._btn_start.setEnabled(has_items and not busy)
-        self._btn_cancel.setVisible(self.running)
+        self._run.set_running(self.running)
         self._btn_save.setEnabled(has_results and not busy)
         self._btn_log.setEnabled(bool(results) and not busy)
         self._btn_open.setEnabled(self._last_saved_dir is not None and self._last_saved_dir.exists())
@@ -306,15 +438,17 @@ class MainWindow(QMainWindow):
         self._btn_add_files.setEnabled(not self.running)
         self._btn_add_folder.setEnabled(not self.running)
         self._drop_zone.setEnabled(not self.running)
+        self._strip_holder.setVisible(not self.running)
+        self._table.set_removable(not busy)
         self._panel.set_locked(self.running)
         self._btn_compare.setEnabled(self._selected_result() is not None)
-        self._progress.setVisible(self.running or self._total > 0)
+        self._summary_strip.setVisible(self._last_summary is not None and not self.running)
         self._update_info()
+        self._update_chrome()
 
     def _update_info(self) -> None:
-        if self.running:
-            return
-        if self._scan_worker is not None:
+        """The status-bar sentence (scan / progress texts are set where they happen)."""
+        if self.running or self._scan_worker is not None:
             return
         parts: list[str] = []
         if self._summary_text:
@@ -322,7 +456,9 @@ class MainWindow(QMainWindow):
         else:
             n = self._model.rowCount()
             if n:
-                parts.append(f"В очереди: {n} · {format_size(self._model.total_source_size())}")
+                parts.append(
+                    f"{n} {plural(n, _FILES)} · {format_size(self._model.total_source_size())} · готово к запуску"
+                )
             else:
                 parts.append("Очередь пуста")
         if self._skipped:
@@ -331,20 +467,85 @@ class MainWindow(QMainWindow):
             parts.append(f"уже в очереди: {self._duplicates}")
         self._info.setText(" · ".join(parts))
 
+    def _percent(self) -> int:
+        return 100 * self._done // self._total if self._total else 0
+
+    def _update_chrome(self) -> None:
+        """Title bar, /01 header, top-bar readouts, /04 info and the status dot."""
+        n = self._model.rowCount()
+        size = format_size(self._model.total_source_size())
+        options = self._panel.options()
+        summary = self._last_summary
+        files = plural(n, _FILES)
+
+        if self.running:
+            title = f"— обработка {self._percent()}%"
+            source = f"ОБРАБОТКА {self._done} / {self._total}"
+            start = f"THR {self._busy_threads(options)} / {options.workers}"
+            dot: str | None = "violet"
+        elif summary is not None:
+            title = f"— готово · {self._saved_text(summary)}"
+            source = f"ГОТОВО {summary.ok + summary.already_optimized} / {summary.total} · ERR {summary.errors:02d}"
+            start = f"ПОВТОР · {n:03d} {files.upper()}"
+            dot = "lime"
+        elif n:
+            title = f"— {n} {files} · {size}"
+            source = f"FILES {n:03d} · {size} · DIRS {self._model.folder_count()}"
+            start = f"{n:03d} {files.upper()} → {self._target_tag(options)}"
+            dot = "ink"
+        else:
+            title, source, start, dot = "", "FILES 000 · DEPTH —", "НЕТ ФАЙЛОВ", None
+        if self._drop_zone.highlighted:
+            dot = "violet"
+        self._title.set_info(title)
+        self.setWindowTitle(f"ImgForge {title}".strip())
+        self._sources_header.set_right(source)
+        self._run.set_info(start)
+        self._dot.set_fill(dot)
+
+        out = self._target_tag(options)
+        self._ro_queue.set_value(f"{n:03d} / {size}" if n else "000 / 0 Б")
+        self._ro_out.set_value(f"{out} · {self._quality_tag(options)}")
+        self._ro_thr.set_value(
+            f"{self._busy_threads(options)} / {options.workers}" if self.running else str(options.workers)
+        )
+        self._drop_zone.set_readout(f"OUT → {out} · THR {options.workers}")
+        self._drop_strip.set_count(f"{n:03d} В ОЧЕРЕДИ")
+
+    def _busy_threads(self, options: ProcessingOptions) -> int:
+        return max(1, min(options.workers, self._total - self._done))
+
+    @staticmethod
+    def _saved_text(summary: Summary) -> str:
+        pct = summary.saved_percent
+        return f"−{pct:.1f}%" if pct >= 0 else f"+{abs(pct):.1f}%"
+
+    @staticmethod
+    def _target_tag(options: ProcessingOptions) -> str:
+        return "ИСХ." if options.mode is Mode.COMPRESS else options.target_format.value
+
+    @staticmethod
+    def _quality_tag(options: ProcessingOptions) -> str:
+        return "—" if options.mode is Mode.CONVERT else _QUALITY_TAGS[options.quality]
+
     def _on_theme_changed(self, tokens) -> None:
-        self._model.set_tokens(tokens)
-        self._drop_zone.set_tokens(tokens)
+        self._theme_switch.set_dark(self._theme.is_dark)
         for dialog in self._compare_dialogs:
             dialog.set_tokens(tokens)
+        self.update()
 
     def _set_theme(self, key: str) -> None:
         self._settings.theme = key
         self._theme.set_preference(key)
         self._settings.save()
 
-    def _on_settings_changed(self) -> None:
-        self._settings.update_from(self._panel.options())
-        self._settings.save()
+    def _on_settings_changed(self, save: bool = True) -> None:
+        options = self._panel.options()
+        self._model.set_options(options)
+        if save:
+            self._settings.update_from(options)
+            self._settings.save()
+        self._update_chrome()
 
     # ================================================================== adding files
 
@@ -389,6 +590,7 @@ class MainWindow(QMainWindow):
         self._duplicates += result.duplicates
         if self._model.add_items(result.items):
             self._summary_text = ""  # the old summary no longer describes the queue
+            self._last_summary = None
         if self._pending_scans:
             pending, self._pending_scans = self._pending_scans, []
             self.add_paths(pending)
@@ -401,6 +603,7 @@ class MainWindow(QMainWindow):
         self._cleanup_work_dir()
         self._skipped = self._duplicates = 0
         self._summary_text = ""
+        self._last_summary = None
         self._total = self._done = 0
         self._last_saved_dir = None
         self._refresh_state()
@@ -410,28 +613,44 @@ class MainWindow(QMainWindow):
             return
         rows = [i.row() for i in self._table.selectionModel().selectedRows()]
         if rows:
-            self._model.remove_rows(rows)
-            self._summary_text = ""
-            self._refresh_state()
+            self._remove_rows(rows)
+
+    def _remove_row(self, row: int) -> None:
+        if not (self.running or self.saving):
+            self._remove_rows([row])
+
+    def _remove_rows(self, rows: list[int]) -> None:
+        self._model.remove_rows(rows)
+        self._summary_text = ""
+        self._last_summary = None
+        self._refresh_state()
 
     # ----- drag & drop
 
     def dragEnterEvent(self, event: QDragEnterEvent) -> None:  # noqa: N802
         if not self.running and event.mimeData().hasUrls():
             event.acceptProposedAction()
-            self._drop_zone.set_highlighted(True)
+            paths = [Path(u.toLocalFile()) for u in event.mimeData().urls() if u.isLocalFile()]
+            dirs = sum(1 for p in paths if p.is_dir())
+            self._drop_zone.set_drag_info(len(paths) - dirs, dirs)
+            self._set_drag_highlight(True)
         else:
             event.ignore()
 
     def dragLeaveEvent(self, event: QDragLeaveEvent) -> None:  # noqa: N802
-        self._drop_zone.set_highlighted(False)
+        self._set_drag_highlight(False)
 
     def dropEvent(self, event: QDropEvent) -> None:  # noqa: N802
-        self._drop_zone.set_highlighted(False)
+        self._set_drag_highlight(False)
         paths = [Path(u.toLocalFile()) for u in event.mimeData().urls() if u.isLocalFile()]
         if paths:
             event.acceptProposedAction()
             self.add_paths(paths)
+
+    def _set_drag_highlight(self, on: bool) -> None:
+        self._drop_zone.set_highlighted(on)
+        self._drop_strip.set_highlighted(on)
+        self._update_chrome()
 
     # ================================================================== processing
 
@@ -447,20 +666,21 @@ class MainWindow(QMainWindow):
         self._model.clear_results()
         items = self._model.items()
         self._summary_text = ""
+        self._last_summary = None
         self._cancelled = False
         self._total, self._done = len(items), 0
         self._bytes_total = sum(i.size for i in items) or 1
         self._bytes_done = 0
         self._started_at = time.monotonic()
-        self._progress.setRange(0, self._total)
-        self._progress.setValue(0)
         worker = ProcessWorker(items, options, self._work_dir, self)
         worker.resultReady.connect(self._on_result)
         worker.finishedAll.connect(self._on_process_finished)
         worker.failed.connect(self._on_process_failed)
         self._process_worker = worker
-        self._info.setText(f"Обработка: {self._total} файлов, потоков: {options.workers}")
+        self._model.set_running(True, options.workers)
+        self._info.setText(f"Обработка: {self._total} {plural(self._total, _FILES)}, потоков: {options.workers}")
         self._timer.start()
+        self._anim.start()
         self._tick()
         worker.start()
         self._refresh_state()
@@ -476,33 +696,43 @@ class MainWindow(QMainWindow):
         self._model.set_result(result.index, result)
         self._done += 1
         self._bytes_done += result.source.size
-        self._progress.setValue(self._done)
+        self._update_progress()
+        self._update_chrome()
+
+    def _animate(self) -> None:
+        self._table.advance()
+        self._run.advance()
 
     def _tick(self) -> None:
-        if not self.running:
-            return
+        if self.running:
+            self._update_progress()
+
+    def _update_progress(self) -> None:
+        options = self._last_options
         elapsed = time.monotonic() - self._started_at
         fraction = self._bytes_done / self._bytes_total
-        text = f"{self._done} / {self._total} · прошло {format_duration(elapsed)}"
+        threads = self._busy_threads(options) if options else 0
+        meta = f"THR {threads}/{options.workers if options else 0} · {format_duration(elapsed)}"
         if fraction >= 0.02 and self._done < self._total:
-            text += f" · осталось ~{format_duration(elapsed * (1 - fraction) / fraction)}"
-        self._progress_text.setText(text)
+            meta += f" · ETA {format_duration(elapsed * (1 - fraction) / fraction)}"
+        inflight = min(options.workers if options else 1, self._total - self._done)
+        self._run.set_progress(self._done, self._total, inflight, meta)
 
     def _on_process_finished(self, outcome: BatchOutcome) -> None:
         self._finish_worker()
         self._last_elapsed = outcome.elapsed
         s = summarize(outcome.results)
+        self._last_summary = s
         head = (
             f"Отменено: обработано {s.total} из {self._total}"
             if outcome.cancelled
-            else f"Готово: {s.total} файлов"
+            else f"Готово: {s.ok + s.already_optimized} из {s.total}"
         )
+        tail = f" · ошибок: {s.errors}" if s.errors else ""
         self._summary_text = (
-            f"{head} (OK: {s.ok}, уже оптимизировано: {s.already_optimized}, ошибок: {s.errors}) · "
-            f"{format_size(s.size_before)} → {format_size(s.size_after)} · "
-            f"сэкономлено {format_size(s.saved_bytes)} ({s.saved_percent:.1f}%)"
+            f"{head}{tail} · сэкономлено {format_size(s.saved_bytes)} ({s.saved_percent:.1f}%)"
         )
-        self._progress_text.setText(f"{s.total} / {self._total} · {format_duration(outcome.elapsed)}")
+        self._summary_strip.set_summary(s, outcome.elapsed)
         self._refresh_state()
 
     def _on_process_failed(self, message: str) -> None:
@@ -513,6 +743,8 @@ class MainWindow(QMainWindow):
     def _finish_worker(self) -> None:
         worker, self._process_worker = self._process_worker, None
         self._timer.stop()
+        self._anim.stop()
+        self._model.set_running(False)
         self._btn_cancel.setEnabled(True)
         if worker is not None:
             worker.wait()

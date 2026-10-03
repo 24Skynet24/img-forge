@@ -1,34 +1,44 @@
-"""Table model for the queue and the results (one virtualized table for both)."""
+"""Table model for the queue and the results (one virtualized list for both)."""
 from __future__ import annotations
 
 from collections.abc import Iterable
 
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPersistentModelIndex, Qt
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QPixmap
 
-from core.formats import format_info
-from core.models import STATUS_LABELS, FileResult, SourceItem, Status
-from core.utils import format_size
-from gui.themes.tokens import Tokens
+from core.formats import ImageFormat
+from core.models import FileResult, SourceItem, Status
+from core.options import ProcessingOptions
 from gui.widgets.thumbnails import ThumbnailCache
 
-COLUMNS = ("", "Файл", "Папка", "Формат", "Размер", "Новый размер", "Экономия", "Статус")
-COL_PREVIEW, COL_NAME, COL_FOLDER, COL_FORMAT, COL_SIZE, COL_NEW_SIZE, COL_SAVED, COL_STATUS = range(8)
 RESULT_ROLE = Qt.ItemDataRole.UserRole
 ITEM_ROLE = Qt.ItemDataRole.UserRole + 1
+STATE_ROLE = Qt.ItemDataRole.UserRole + 2
+
+# Row states shown in the result column.
+QUEUED, WAITING, WORKING, DONE, OPTIMIZED, FAILED = "queued", "waiting", "working", "done", "optimized", "failed"
 
 _Index = QModelIndex | QPersistentModelIndex
 
 
 class QueueModel(QAbstractTableModel):
-    """Rows are queued images; once processed they also carry their :class:`FileResult`."""
+    """One row per queued image; once processed a row also carries its :class:`FileResult`.
 
-    def __init__(self, thumbnails: ThumbnailCache, tokens: Tokens, parent=None) -> None:
+    While a batch runs the first ``workers`` rows without a result are the ones being processed
+    (the pipeline submits in queue order), the rest are waiting.
+    """
+
+    def __init__(self, thumbnails: ThumbnailCache, parent=None) -> None:
         super().__init__(parent)
         self._thumbs = thumbnails
-        self._tokens = tokens
         self._items: list[SourceItem] = []
         self._results: list[FileResult | None] = []
+        self._options: ProcessingOptions | None = None
+        self._running = False
+        self._slots = 1
+        self._cursor = 0  # every row before it already has a result
+        self._inflight: set[int] = set()
+        self._folders: set[str] | None = None
         thumbnails.ready.connect(self._thumbnails_ready)
 
     # -- model API ----------------------------------------------------------------
@@ -37,37 +47,23 @@ class QueueModel(QAbstractTableModel):
         return 0 if parent.isValid() else len(self._items)
 
     def columnCount(self, parent: _Index = QModelIndex()) -> int:  # noqa: B008
-        return 0 if parent.isValid() else len(COLUMNS)
-
-    def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.ItemDataRole.DisplayRole):
-        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
-            return COLUMNS[section]
-        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.TextAlignmentRole:
-            right = section in (COL_SIZE, COL_NEW_SIZE, COL_SAVED)
-            return int((Qt.AlignmentFlag.AlignRight if right else Qt.AlignmentFlag.AlignLeft) | Qt.AlignmentFlag.AlignVCenter)
-        return None
+        return 0 if parent.isValid() else 1
 
     def data(self, index: _Index, role: int = Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
             return None
-        row, col = index.row(), index.column()
+        row = index.row()
         item, result = self._items[row], self._results[row]
-
-        if role == Qt.ItemDataRole.DecorationRole and col == COL_PREVIEW:
-            return self._thumbs.pixmap(str(item.path))
+        if role == Qt.ItemDataRole.DisplayRole:
+            return item.name
         if role == RESULT_ROLE:
             return result
         if role == ITEM_ROLE:
             return item
-        if role == Qt.ItemDataRole.TextAlignmentRole:
-            right = col in (COL_SIZE, COL_NEW_SIZE, COL_SAVED)
-            return int((Qt.AlignmentFlag.AlignRight if right else Qt.AlignmentFlag.AlignLeft) | Qt.AlignmentFlag.AlignVCenter)
-        if role == Qt.ItemDataRole.ForegroundRole:
-            return self._foreground(col, result)
+        if role == STATE_ROLE:
+            return self.state(row)
         if role == Qt.ItemDataRole.ToolTipRole:
             return self._tooltip(item, result)
-        if role == Qt.ItemDataRole.DisplayRole:
-            return self._text(col, item, result)
         return None
 
     # -- queue editing --------------------------------------------------------------
@@ -82,6 +78,7 @@ class QueueModel(QAbstractTableModel):
         self._items.extend(new)
         self._results.extend([None] * len(new))
         self.endInsertRows()
+        self._folders = None
         return len(new)
 
     def remove_rows(self, rows: Iterable[int]) -> None:
@@ -101,12 +98,17 @@ class QueueModel(QAbstractTableModel):
             del self._items[first : last + 1]
             del self._results[first : last + 1]
             self.endRemoveRows()
+        self._cursor = 0
+        self._folders = None
 
     def clear(self) -> None:
         self.beginResetModel()
         self._items.clear()
         self._results.clear()
         self._thumbs.clear()
+        self._cursor = 0
+        self._inflight.clear()
+        self._folders = None
         self.endResetModel()
 
     # -- results ------------------------------------------------------------------------
@@ -114,21 +116,27 @@ class QueueModel(QAbstractTableModel):
     def set_result(self, row: int, result: FileResult) -> None:
         if 0 <= row < len(self._results):
             self._results[row] = result
-            self.dataChanged.emit(self.index(row, 0), self.index(row, len(COLUMNS) - 1))
+            self._track_inflight()
+            self.dataChanged.emit(self.index(row, 0), self.index(row, 0))
 
     def clear_results(self) -> None:
         if not self._items:
             return
         self._results = [None] * len(self._items)
-        self.dataChanged.emit(self.index(0, 0), self.index(len(self._items) - 1, len(COLUMNS) - 1))
+        self._cursor = 0
+        self._inflight.clear()
+        self._emit_all()
 
-    def set_tokens(self, tokens: Tokens) -> None:
-        self._tokens = tokens
-        if self._items:
-            self.dataChanged.emit(
-                self.index(0, 0), self.index(len(self._items) - 1, len(COLUMNS) - 1),
-                [Qt.ItemDataRole.ForegroundRole],
-            )
+    def set_running(self, running: bool, slots: int = 1) -> None:
+        """Tell the model whether a batch is in progress and how many files run at once."""
+        self._running, self._slots = running, max(1, slots)
+        self._track_inflight()
+        self._emit_all()
+
+    def set_options(self, options: ProcessingOptions) -> None:
+        """The options the next run will use (decide the target format shown in each row)."""
+        self._options = options
+        self._emit_all()
 
     # -- accessors ------------------------------------------------------------------------
 
@@ -148,59 +156,56 @@ class QueueModel(QAbstractTableModel):
     def total_source_size(self) -> int:
         return sum(i.size for i in self._items)
 
+    def folder_count(self) -> int:
+        """Number of distinct folders the queued files came from (loose files count as none)."""
+        if self._folders is None:
+            self._folders = {i.folder for i in self._items if i.folder}
+        return len(self._folders)
+
+    def thumbnail(self, row: int) -> QPixmap | None:
+        return self._thumbs.pixmap(str(self._items[row].path))
+
+    def state(self, row: int) -> str:
+        result = self._results[row]
+        if result is not None:
+            if result.status is Status.ERROR:
+                return FAILED
+            return OPTIMIZED if result.status is Status.ALREADY_OPTIMIZED else DONE
+        if self._running:
+            return WORKING if row in self._inflight else WAITING
+        return QUEUED
+
+    def target_format(self, row: int) -> ImageFormat:
+        """Output format of a row: the real one when processed, otherwise predicted from the options."""
+        result = self._results[row]
+        if result is not None and result.output_format is not None:
+            return result.output_format
+        item = self._items[row]
+        return self._options.output_format_for(item.format) if self._options else item.format
+
     # -- helpers --------------------------------------------------------------------------------
 
-    def _thumbnails_ready(self) -> None:
+    def _track_inflight(self) -> None:
+        self._inflight.clear()
+        if not self._running:
+            return
+        n, i = len(self._items), self._cursor
+        while i < n and self._results[i] is not None:
+            i += 1
+        self._cursor = i
+        found = 0
+        while i < n and found < self._slots:
+            if self._results[i] is None:
+                self._inflight.add(i)
+                found += 1
+            i += 1
+
+    def _emit_all(self) -> None:
         if self._items:
-            self.dataChanged.emit(
-                self.index(0, COL_PREVIEW), self.index(len(self._items) - 1, COL_PREVIEW),
-                [Qt.ItemDataRole.DecorationRole],
-            )
+            self.dataChanged.emit(self.index(0, 0), self.index(len(self._items) - 1, 0))
 
-    @staticmethod
-    def _text(col: int, item: SourceItem, result: FileResult | None) -> str:
-        if col == COL_NAME:
-            return item.name
-        if col == COL_FOLDER:
-            return item.folder or "—"
-        if col == COL_FORMAT:
-            label = format_info(item.format).label
-            if result is not None and result.ok and result.output_format not in (None, item.format):
-                return f"{label} → {format_info(result.output_format).label}"
-            return label
-        if col == COL_SIZE:
-            return format_size(item.size)
-        if result is None:
-            return "В очереди" if col == COL_STATUS else ""
-        if col == COL_NEW_SIZE:
-            return format_size(result.new_size) if result.ok else ""
-        if col == COL_SAVED:
-            if not result.ok:
-                return ""
-            pct = result.saved_percent
-            return f"{pct:.1f}%" if pct >= 0 else f"−{abs(pct):.1f}%"
-        if col == COL_STATUS:
-            label = STATUS_LABELS[result.status]
-            if result.status is Status.ERROR:
-                return f"{label}: {result.message}"
-            return f"{label} ⚠" if result.warnings else label
-        return ""
-
-    def _foreground(self, col: int, result: FileResult | None):
-        t = self._tokens
-        if col in (COL_FOLDER,) or (col == COL_STATUS and result is None):
-            return QColor(t.muted)
-        if result is None:
-            return None
-        if col == COL_STATUS:
-            if result.status is Status.ERROR:
-                return QColor(t.danger)
-            if result.status is Status.ALREADY_OPTIMIZED:
-                return QColor(t.muted)
-            return QColor(t.warning if result.warnings else t.success)
-        if col == COL_SAVED and result.ok:
-            return QColor(t.success if result.saved_percent > 0 else t.warning)
-        return None
+    def _thumbnails_ready(self) -> None:
+        self._emit_all()
 
     @staticmethod
     def _tooltip(item: SourceItem, result: FileResult | None) -> str:

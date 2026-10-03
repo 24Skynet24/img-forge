@@ -28,6 +28,11 @@ from .conftest import gradient_image, save_as  # noqa: E402
 def app() -> QApplication:
     instance = QApplication.instance() or QApplication(["imgforge-test"])
     instance.setStyle("Fusion")
+    # the real app runs with the bundled fonts; layout minimums depend on their metrics
+    from gui.themes.fonts import app_font, load_fonts
+
+    load_fonts(Path(__file__).resolve().parent.parent / "assets" / "fonts")
+    instance.setFont(app_font())
     return instance
 
 

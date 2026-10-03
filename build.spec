@@ -6,7 +6,7 @@
 # The result is dist/ImgForge.exe.
 from PyInstaller.utils.hooks import collect_all
 
-datas = [("assets/icon.ico", "assets")]
+datas = [("assets/icon.ico", "assets"), ("assets/fonts", "assets/fonts")]
 binaries = []
 hiddenimports = []
 

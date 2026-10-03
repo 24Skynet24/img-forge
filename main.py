@@ -68,12 +68,17 @@ def main() -> int:
 
     from gui.main_window import MainWindow
     from gui.settings import AppSettings
+    from gui.themes.fonts import app_font, load_fonts
     from gui.themes.manager import ThemeManager
+    from gui.widgets.kit import install_input_tracker
 
     app = QApplication(sys.argv)
     app.setApplicationName("ImgForge")
     app.setOrganizationName("ImgForge")
     app.setStyle("Fusion")
+    load_fonts(_resource("assets/fonts"))
+    app.setFont(app_font())
+    install_input_tracker(app)
     icon_path = _resource("assets/icon.ico")
     icon = QIcon(str(icon_path)) if icon_path.exists() else None
     if icon is not None:

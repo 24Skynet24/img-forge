@@ -4,7 +4,6 @@ A Windows desktop image converter and compressor (Russian UI) — drop photos or
 choose a mode, get smaller files in the format you want, with the folder structure preserved.
 
 ![ImgForge screenshot](docs/screenshot.png)
-<!-- Replace docs/screenshot.png with a screenshot of the real window if you like. -->
 
 ## Features
 
@@ -80,11 +79,14 @@ core/        Qt-free processing core (also imported by the worker processes)
   report.py      text log
 gui/         PySide6 interface
   main_window.py, compare_view.py, workers.py (QThreads), settings.py (QSettings)
-  widgets/       drop zone, queue model, thumbnails, settings panel, conflict dialog
-  themes/        colour tokens, style sheet, theme manager
+  frameless.py   native resize / snap glue for the frameless window (Windows)
+  widgets/       drop zone, queue model + list, custom controls (kit.py, controls.py), settings
+                 panel, run panel, title bar, summary strip, conflict dialog
+  themes/        colour tokens (light / dark), fonts, the ImgForge mark, style sheet, theme manager
 main.py      entry point (also --selftest)
 tests/         pytest suite
-assets/        application icon (scripts/make_icon.py regenerates it)
+assets/        application icon (scripts/make_icon.py regenerates it) and bundled fonts
+               (JetBrains Mono, Oswald — SIL OFL, licences next to the files)
 build.spec     PyInstaller spec
 ```
 
