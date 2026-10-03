@@ -12,9 +12,9 @@ from pathlib import Path
 
 from PIL import Image, ImageCms, ImageSequence
 
-from imgforge.core import compressor
-from imgforge.core.formats import ImageFormat, format_info
-from imgforge.core.options import ProcessingOptions, QualityLevel
+from core import compressor
+from core.formats import ImageFormat, format_info
+from core.options import ProcessingOptions, QualityLevel
 
 EXIF_ORIENTATION = 0x0112
 _ANIMATED_SOURCES = {"GIF", "WEBP", "PNG", "AVIF"}

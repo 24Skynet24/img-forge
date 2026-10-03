@@ -12,7 +12,7 @@ from pathlib import Path
 
 def _resource(relative: str) -> Path:
     """Locate a bundled data file (works from source and inside the PyInstaller exe)."""
-    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
     return base / relative
 
 
@@ -26,11 +26,11 @@ def _selftest(report: Path) -> int:
 
     from PIL import Image
 
-    from imgforge.core.formats import OUTPUT_FORMATS
-    from imgforge.core.models import Status
-    from imgforge.core.options import Mode, ProcessingOptions
-    from imgforge.core.pipeline import BatchRunner
-    from imgforge.core.scanner import scan_paths
+    from core.formats import OUTPUT_FORMATS
+    from core.models import Status
+    from core.options import Mode, ProcessingOptions
+    from core.pipeline import BatchRunner
+    from core.scanner import scan_paths
 
     lines: list[str] = []
     failures = 0
@@ -66,9 +66,9 @@ def main() -> int:
     from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import QApplication
 
-    from imgforge.gui.main_window import MainWindow
-    from imgforge.gui.settings import AppSettings
-    from imgforge.gui.themes.manager import ThemeManager
+    from gui.main_window import MainWindow
+    from gui.settings import AppSettings
+    from gui.themes.manager import ThemeManager
 
     app = QApplication(sys.argv)
     app.setApplicationName("ImgForge")

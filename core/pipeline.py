@@ -13,11 +13,11 @@ from pathlib import Path, PurePath
 
 from PIL import Image, UnidentifiedImageError
 
-from imgforge.core import compressor
-from imgforge.core.converter import Prepared, encode, prepare_image
-from imgforge.core.formats import ImageFormat, format_info
-from imgforge.core.models import FileResult, SourceItem, Status
-from imgforge.core.options import Mode, ProcessingOptions
+from core import compressor
+from core.converter import Prepared, encode, prepare_image
+from core.formats import ImageFormat, format_info
+from core.models import FileResult, SourceItem, Status
+from core.options import Mode, ProcessingOptions
 
 
 @dataclass(frozen=True)

@@ -15,11 +15,11 @@ from PySide6.QtCore import QSettings  # noqa: E402
 from PySide6.QtGui import QKeySequence  # noqa: E402
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox  # noqa: E402
 
-from imgforge.core.formats import ImageFormat  # noqa: E402
-from imgforge.core.models import Status  # noqa: E402
-from imgforge.core.options import Mode  # noqa: E402
-from imgforge.core.saver import ConflictAction  # noqa: E402
-from imgforge.gui.settings import AppSettings  # noqa: E402
+from core.formats import ImageFormat  # noqa: E402
+from core.models import Status  # noqa: E402
+from core.options import Mode  # noqa: E402
+from core.saver import ConflictAction  # noqa: E402
+from gui.settings import AppSettings  # noqa: E402
 
 from .conftest import gradient_image, save_as  # noqa: E402
 
@@ -43,8 +43,8 @@ def wait_until(condition: Callable[[], bool], timeout: float = 60.0) -> None:
 
 @pytest.fixture
 def window(app, tmp_path: Path, monkeypatch):
-    from imgforge.gui.main_window import MainWindow
-    from imgforge.gui.themes.manager import ThemeManager
+    from gui.main_window import MainWindow
+    from gui.themes.manager import ThemeManager
 
     ini = tmp_path / "settings.ini"
     monkeypatch.setattr(
@@ -104,7 +104,7 @@ def test_full_flow(window, photos: Path, tmp_path: Path, monkeypatch) -> None:
     dest = tmp_path / "dest"
     (dest / "Photos").mkdir(parents=True)
     monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: str(dest))
-    from imgforge.gui import main_window as mw
+    from gui import main_window as mw
 
     class AutoRename:
         def __init__(self, *_a, **_k) -> None:

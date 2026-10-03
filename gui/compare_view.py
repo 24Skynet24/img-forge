@@ -25,11 +25,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from imgforge.core.formats import format_info
-from imgforge.core.models import FileResult
-from imgforge.core.utils import format_size
-from imgforge.gui.themes.tokens import Tokens
-from imgforge.gui.workers import ImageLoadWorker
+from core.formats import format_info
+from core.models import FileResult
+from core.utils import format_size
+from gui.themes.tokens import Tokens
+from gui.workers import ImageLoadWorker
 
 _GRAB = 12  # px around the split line that grab the handle
 _MIN_ZOOM, _MAX_ZOOM = 0.01, 64.0

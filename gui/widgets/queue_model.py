@@ -6,11 +6,11 @@ from collections.abc import Iterable
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QPersistentModelIndex, Qt
 from PySide6.QtGui import QColor
 
-from imgforge.core.formats import format_info
-from imgforge.core.models import STATUS_LABELS, FileResult, SourceItem, Status
-from imgforge.core.utils import format_size
-from imgforge.gui.themes.tokens import Tokens
-from imgforge.gui.widgets.thumbnails import ThumbnailCache
+from core.formats import format_info
+from core.models import STATUS_LABELS, FileResult, SourceItem, Status
+from core.utils import format_size
+from gui.themes.tokens import Tokens
+from gui.widgets.thumbnails import ThumbnailCache
 
 COLUMNS = ("", "Файл", "Папка", "Формат", "Размер", "Новый размер", "Экономия", "Статус")
 COL_PREVIEW, COL_NAME, COL_FOLDER, COL_FORMAT, COL_SIZE, COL_NEW_SIZE, COL_SAVED, COL_STATUS = range(8)

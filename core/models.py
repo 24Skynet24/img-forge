@@ -5,7 +5,7 @@ import enum
 from dataclasses import dataclass
 from pathlib import Path, PurePath
 
-from imgforge.core.formats import ImageFormat
+from core.formats import ImageFormat
 
 
 class Status(enum.Enum):

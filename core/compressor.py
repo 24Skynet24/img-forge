@@ -9,7 +9,7 @@ import mozjpeg_lossless_optimization as mozjpeg
 import oxipng
 from PIL import Image
 
-from imgforge.core.options import QualityLevel
+from core.options import QualityLevel
 
 COPY_MARKERS = mozjpeg.COPY_MARKERS
 

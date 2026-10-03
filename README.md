@@ -37,7 +37,7 @@ Requires Windows and Python 3.11+.
 python -m venv .venv
 .\.venv\Scripts\activate
 pip install -r requirements-dev.txt
-python -m imgforge
+python main.py
 ```
 
 ## Run the tests
@@ -67,23 +67,22 @@ without opening a window:
 ## Project layout
 
 ```
-imgforge/
-  core/        Qt-free processing core (also imported by the worker processes)
-    formats.py     format registry and capabilities, Pillow plugin setup
-    options.py     Mode, QualityLevel, ProcessingOptions
-    models.py      SourceItem, FileResult, Status, summarize()
-    converter.py   decode, orientation, colour management, flattening, animation, encoders
-    compressor.py  quality profiles, libimagequant / oxipng / mozjpeg primitives
-    scanner.py     recursive scan, de-duplication, skipped-file count
-    pipeline.py    process_file() and BatchRunner (process pool, cancel, crash recovery)
-    saver.py       structure-mirroring save with Overwrite / Rename / Skip
-    preview.py     thumbnails and display images
-    report.py      text log
-  gui/         PySide6 interface
-    main_window.py, compare_view.py, workers.py (QThreads), settings.py (QSettings)
-    widgets/       drop zone, queue model, thumbnails, settings panel, conflict dialog
-    themes/        colour tokens, style sheet, theme manager
-  main.py      entry point (also --selftest)
+core/        Qt-free processing core (also imported by the worker processes)
+  formats.py     format registry and capabilities, Pillow plugin setup
+  options.py     Mode, QualityLevel, ProcessingOptions
+  models.py      SourceItem, FileResult, Status, summarize()
+  converter.py   decode, orientation, colour management, flattening, animation, encoders
+  compressor.py  quality profiles, libimagequant / oxipng / mozjpeg primitives
+  scanner.py     recursive scan, de-duplication, skipped-file count
+  pipeline.py    process_file() and BatchRunner (process pool, cancel, crash recovery)
+  saver.py       structure-mirroring save with Overwrite / Rename / Skip
+  preview.py     thumbnails and display images
+  report.py      text log
+gui/         PySide6 interface
+  main_window.py, compare_view.py, workers.py (QThreads), settings.py (QSettings)
+  widgets/       drop zone, queue model, thumbnails, settings panel, conflict dialog
+  themes/        colour tokens, style sheet, theme manager
+main.py      entry point (also --selftest)
 tests/         pytest suite
 assets/        application icon (scripts/make_icon.py regenerates it)
 build.spec     PyInstaller spec

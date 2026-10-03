@@ -6,8 +6,8 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path, PurePath
 
-from imgforge.core.formats import format_from_path
-from imgforge.core.models import SourceItem
+from core.formats import format_from_path
+from core.models import SourceItem
 
 
 @dataclass

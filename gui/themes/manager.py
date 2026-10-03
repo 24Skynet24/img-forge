@@ -4,9 +4,9 @@ from __future__ import annotations
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import QApplication
 
-from imgforge.gui.themes.icons import arrow_icon_urls
-from imgforge.gui.themes.stylesheet import build_palette, build_stylesheet
-from imgforge.gui.themes.tokens import DARK, LIGHT, Tokens
+from gui.themes.icons import arrow_icon_urls
+from gui.themes.stylesheet import build_palette, build_stylesheet
+from gui.themes.tokens import DARK, LIGHT, Tokens
 
 SYSTEM, LIGHT_THEME, DARK_THEME = "system", "light", "dark"
 PREFERENCES = (SYSTEM, LIGHT_THEME, DARK_THEME)

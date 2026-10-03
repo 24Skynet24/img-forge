@@ -5,7 +5,7 @@ from string import Template
 
 from PySide6.QtGui import QColor, QPalette
 
-from imgforge.gui.themes.tokens import Tokens
+from gui.themes.tokens import Tokens
 
 _QSS = Template(
     """

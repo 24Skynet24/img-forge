@@ -3,10 +3,10 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from imgforge.core.formats import format_info
-from imgforge.core.models import STATUS_LABELS, FileResult, summarize
-from imgforge.core.options import Mode, ProcessingOptions, QualityLevel
-from imgforge.core.utils import format_size
+from core.formats import format_info
+from core.models import STATUS_LABELS, FileResult, summarize
+from core.options import Mode, ProcessingOptions, QualityLevel
+from core.utils import format_size
 
 _MODE_LABELS = {
     Mode.COMPRESS: "Только сжатие",

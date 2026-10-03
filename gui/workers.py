@@ -7,13 +7,13 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
 
-from imgforge.core.models import SourceItem
-from imgforge.core.options import ProcessingOptions
-from imgforge.core.pipeline import BatchRunner
-from imgforge.core.preview import load_display_image
-from imgforge.core.saver import ConflictAction, SaveEntry, save_outputs
-from imgforge.core.scanner import scan_paths
-from imgforge.gui.imaging import pil_to_qimage
+from core.models import SourceItem
+from core.options import ProcessingOptions
+from core.pipeline import BatchRunner
+from core.preview import load_display_image
+from core.saver import ConflictAction, SaveEntry, save_outputs
+from core.scanner import scan_paths
+from gui.imaging import pil_to_qimage
 
 
 class ScanWorker(QThread):

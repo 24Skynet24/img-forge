@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QCheckBox, QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 
-from imgforge.core.saver import ConflictAction
+from core.saver import ConflictAction
 
 
 class ConflictDialog(QDialog):

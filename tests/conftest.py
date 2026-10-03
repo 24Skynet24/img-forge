@@ -7,10 +7,10 @@ from pathlib import Path, PurePath
 import pytest
 from PIL import Image
 
-from imgforge.core.formats import ImageFormat, format_info
-from imgforge.core.models import FileResult, SourceItem
-from imgforge.core.options import Mode, ProcessingOptions, QualityLevel
-from imgforge.core.pipeline import Task, process_file
+from core.formats import ImageFormat, format_info
+from core.models import FileResult, SourceItem
+from core.options import Mode, ProcessingOptions, QualityLevel
+from core.pipeline import Task, process_file
 
 
 def gradient_image(size: tuple[int, int] = (64, 48), mode: str = "RGB") -> Image.Image:
@@ -46,7 +46,7 @@ def save_as(img: Image.Image, path: Path, fmt: ImageFormat, **kwargs) -> Path:
 
 
 def make_item(path: Path, relative: str | None = None) -> SourceItem:
-    from imgforge.core.formats import format_from_path
+    from core.formats import format_from_path
 
     fmt = format_from_path(path)
     assert fmt is not None

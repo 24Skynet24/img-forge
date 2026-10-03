@@ -7,13 +7,13 @@ from pathlib import Path, PurePath
 import pytest
 from PIL import Image
 
-from imgforge.core.formats import ImageFormat
-from imgforge.core.models import FileResult, Status, summarize
-from imgforge.core.options import Mode, ProcessingOptions
-from imgforge.core.pipeline import BatchRunner, Task, process_file
-from imgforge.core.report import format_log
-from imgforge.core.saver import ConflictAction, SaveEntry, save_outputs
-from imgforge.core.scanner import scan_paths
+from core.formats import ImageFormat
+from core.models import FileResult, Status, summarize
+from core.options import Mode, ProcessingOptions
+from core.pipeline import BatchRunner, Task, process_file
+from core.report import format_log
+from core.saver import ConflictAction, SaveEntry, save_outputs
+from core.scanner import scan_paths
 
 from .conftest import gradient_image, make_item, save_as
 

@@ -7,7 +7,7 @@ from pathlib import Path
 from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
 
-from imgforge.gui.themes.tokens import Tokens
+from gui.themes.tokens import Tokens
 
 
 def _arrow(colour: str, up: bool, size: int = 20) -> QPixmap:

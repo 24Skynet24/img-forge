@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from imgforge.core.converter import (
+from core.converter import (
     EXIF_ORIENTATION,
     to_working_mode,
     apply_orientation,

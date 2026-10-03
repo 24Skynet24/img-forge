@@ -5,9 +5,9 @@ from dataclasses import dataclass, field
 
 from PySide6.QtCore import QByteArray, QSettings
 
-from imgforge.core.formats import OUTPUT_FORMATS, ImageFormat
-from imgforge.core.options import Mode, ProcessingOptions, QualityLevel, default_workers
-from imgforge.gui.themes.manager import PREFERENCES, SYSTEM
+from core.formats import OUTPUT_FORMATS, ImageFormat
+from core.options import Mode, ProcessingOptions, QualityLevel, default_workers
+from gui.themes.manager import PREFERENCES, SYSTEM
 
 
 @dataclass

@@ -7,8 +7,8 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 from PySide6.QtGui import QImage, QPixmap
 
-from imgforge.core.preview import load_thumbnail
-from imgforge.gui.imaging import pil_to_qimage
+from core.preview import load_thumbnail
+from gui.imaging import pil_to_qimage
 
 _DEVICE_PIXEL_RATIO = 2  # thumbnails are rendered at 2x for crisp HiDPI display
 

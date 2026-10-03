@@ -39,20 +39,20 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from imgforge.core.formats import INPUT_EXTENSIONS
-from imgforge.core.models import FileResult, summarize
-from imgforge.core.options import ProcessingOptions
-from imgforge.core.pipeline import BatchOutcome
-from imgforge.core.report import format_log
-from imgforge.core.saver import SaveEntry, SaveReport
-from imgforge.core.scanner import ScanResult
-from imgforge.core.utils import format_duration, format_size
-from imgforge.gui.compare_view import CompareDialog
-from imgforge.gui.settings import AppSettings
-from imgforge.gui.themes.manager import DARK_THEME, LIGHT_THEME, SYSTEM, ThemeManager
-from imgforge.gui.widgets.conflict_dialog import ConflictDialog
-from imgforge.gui.widgets.drop_zone import DropZone
-from imgforge.gui.widgets.queue_model import (
+from core.formats import INPUT_EXTENSIONS
+from core.models import FileResult, summarize
+from core.options import ProcessingOptions
+from core.pipeline import BatchOutcome
+from core.report import format_log
+from core.saver import SaveEntry, SaveReport
+from core.scanner import ScanResult
+from core.utils import format_duration, format_size
+from gui.compare_view import CompareDialog
+from gui.settings import AppSettings
+from gui.themes.manager import DARK_THEME, LIGHT_THEME, SYSTEM, ThemeManager
+from gui.widgets.conflict_dialog import ConflictDialog
+from gui.widgets.drop_zone import DropZone
+from gui.widgets.queue_model import (
     COL_FOLDER,
     COL_FORMAT,
     COL_NAME,
@@ -62,9 +62,9 @@ from imgforge.gui.widgets.queue_model import (
     COL_SIZE,
     QueueModel,
 )
-from imgforge.gui.widgets.settings_panel import SettingsPanel
-from imgforge.gui.widgets.thumbnails import ThumbnailCache
-from imgforge.gui.workers import ProcessWorker, SaveWorker, ScanWorker
+from gui.widgets.settings_panel import SettingsPanel
+from gui.widgets.thumbnails import ThumbnailCache
+from gui.workers import ProcessWorker, SaveWorker, ScanWorker
 
 THUMB_SIZE = 56
 

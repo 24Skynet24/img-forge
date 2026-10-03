@@ -5,7 +5,7 @@ import enum
 import os
 from dataclasses import dataclass, field
 
-from imgforge.core.formats import ImageFormat, format_info
+from core.formats import ImageFormat, format_info
 
 
 class Mode(enum.Enum):

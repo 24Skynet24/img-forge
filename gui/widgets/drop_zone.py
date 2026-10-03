@@ -5,7 +5,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 
-from imgforge.gui.themes.tokens import Tokens
+from gui.themes.tokens import Tokens
 
 
 def _draw_icon(tokens: Tokens, size: int = 96) -> QPixmap:

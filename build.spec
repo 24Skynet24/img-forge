@@ -18,7 +18,7 @@ for package in ("pillow_heif", "imagequant", "oxipng", "mozjpeg_lossless_optimiz
     hiddenimports += pkg_hidden
 
 a = Analysis(
-    ["imgforge/main.py"],
+    ["main.py"],
     pathex=["."],
     binaries=binaries,
     datas=datas,

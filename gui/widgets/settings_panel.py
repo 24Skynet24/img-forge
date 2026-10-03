@@ -20,9 +20,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from imgforge.core.formats import OUTPUT_FORMATS, format_info
-from imgforge.core.options import Mode, ProcessingOptions, QualityLevel
-from imgforge.gui.settings import AppSettings
+from core.formats import OUTPUT_FORMATS, format_info
+from core.options import Mode, ProcessingOptions, QualityLevel
+from gui.settings import AppSettings
 
 _MODE_LABELS = {
     Mode.COMPRESS: "Только сжатие",

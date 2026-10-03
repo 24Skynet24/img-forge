@@ -6,9 +6,9 @@ from pathlib import Path
 import pytest
 from PIL import Image, ImageCms
 
-from imgforge.core.formats import ImageFormat
-from imgforge.core.models import Status
-from imgforge.core.options import Mode, QualityLevel
+from core.formats import ImageFormat
+from core.models import Status
+from core.options import Mode, QualityLevel
 
 from .conftest import gradient_image, noise_image, run_one, save_as
 

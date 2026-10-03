@@ -6,9 +6,9 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from imgforge.core.formats import OUTPUT_FORMATS, ImageFormat, format_info
-from imgforge.core.models import Status
-from imgforge.core.options import Mode
+from core.formats import OUTPUT_FORMATS, ImageFormat, format_info
+from core.models import Status
+from core.options import Mode
 
 from .conftest import gradient_image, run_one, save_as
 
@@ -136,7 +136,7 @@ def test_exotic_pixel_modes_do_not_crash(tmp_path: Path, work_dir: Path, mode, t
     "mode", ["1", "L", "LA", "La", "P", "PA", "RGB", "RGBA", "RGBa", "RGBX", "CMYK", "I;16", "I", "F", "YCbCr", "LAB", "HSV"]
 )
 def test_working_mode_normalisation(mode: str) -> None:
-    from imgforge.core.converter import to_working_mode
+    from core.converter import to_working_mode
 
     try:
         img = Image.new(mode, (4, 4))
