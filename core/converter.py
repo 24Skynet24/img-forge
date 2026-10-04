@@ -129,7 +129,7 @@ def _read_dpi(im: Image.Image) -> tuple[float, float] | None:
 
 
 def _has_private_metadata(im: Image.Image, exif: Image.Exif | None) -> bool:
-    if exif is not None and any(tag != EXIF_ORIENTATION for tag in exif.keys()):
+    if exif is not None and any(tag != EXIF_ORIENTATION for tag in exif):
         return True
     info = im.info
     if info.get("xmp") or info.get("XML:com.adobe.xmp") or info.get("comment"):

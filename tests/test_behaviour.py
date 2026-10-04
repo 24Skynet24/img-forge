@@ -10,7 +10,7 @@ from core.formats import ImageFormat
 from core.models import Status
 from core.options import Mode, QualityLevel
 
-from .conftest import gradient_image, noise_image, run_one, save_as
+from .conftest import gradient_image, noise_image, run_one
 
 DURATIONS = [60, 120, 180]
 
@@ -23,7 +23,7 @@ def make_animation(path: Path, fmt: str = "GIF", transparent: bool = False) -> P
             for y in range(30):
                 img.putpixel((x, y), (0, 0, 0, 0) if transparent else (255, 255, 255))
         frames.append(img)
-    kwargs = dict(save_all=True, append_images=frames[1:], duration=DURATIONS, loop=0)
+    kwargs = {"save_all": True, "append_images": frames[1:], "duration": DURATIONS, "loop": 0}
     if fmt == "GIF" and transparent:
         kwargs["disposal"] = 2
     frames[0].save(path, fmt, **kwargs)
@@ -54,7 +54,7 @@ def test_animation_keeps_frames_and_timings(tmp_path: Path, work_dir: Path, sour
     n, durations = frame_info(result.output_path)
     assert n == 3
     # GIF stores centiseconds, codecs may round slightly.
-    for got, expected in zip(durations, DURATIONS):
+    for got, expected in zip(durations, DURATIONS, strict=True):
         assert abs(got - expected) <= 20, (durations, DURATIONS)
 
 

@@ -18,7 +18,7 @@ from core.options import Mode, ProcessingOptions  # noqa: E402
 from core.utils import plural  # noqa: E402
 from gui import frameless  # noqa: E402
 
-from .test_gui_smoke import app, photos, wait_until, window  # noqa: E402,F401  (fixtures)
+from .conftest import wait_until  # noqa: E402
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets"
 

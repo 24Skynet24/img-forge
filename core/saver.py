@@ -116,10 +116,8 @@ def save_outputs(
 def _resolve_folder(path: Path, resolver: ConflictResolver, report: SaveReport) -> Path | None:
     if not path.exists():
         return path
-    if path.is_dir():
-        action = resolver(path, True)
-    else:  # a file blocks the folder name
-        action = ConflictAction.RENAME
+    # a file blocking the folder name can only be renamed around
+    action = resolver(path, True) if path.is_dir() else ConflictAction.RENAME
     if action is ConflictAction.SKIP:
         return None
     if action is ConflictAction.OVERWRITE and path.is_dir():

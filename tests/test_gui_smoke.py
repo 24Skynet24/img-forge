@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import os
-import time
-from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -11,9 +9,8 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QSettings  # noqa: E402
 from PySide6.QtGui import QKeySequence  # noqa: E402
-from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox  # noqa: E402
+from PySide6.QtWidgets import QFileDialog, QMessageBox  # noqa: E402
 
 from core.formats import ImageFormat  # noqa: E402
 from core.models import Status  # noqa: E402
@@ -21,59 +18,7 @@ from core.options import Mode  # noqa: E402
 from core.saver import ConflictAction  # noqa: E402
 from gui.settings import AppSettings  # noqa: E402
 
-from .conftest import gradient_image, save_as  # noqa: E402
-
-
-@pytest.fixture(scope="module")
-def app() -> QApplication:
-    instance = QApplication.instance() or QApplication(["imgforge-test"])
-    instance.setStyle("Fusion")
-    # the real app runs with the bundled fonts; layout minimums depend on their metrics
-    from gui.themes.fonts import app_font, load_fonts
-
-    load_fonts(Path(__file__).resolve().parent.parent / "assets" / "fonts")
-    instance.setFont(app_font())
-    return instance
-
-
-def wait_until(condition: Callable[[], bool], timeout: float = 60.0) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        QApplication.processEvents()
-        if condition():
-            return
-        time.sleep(0.01)
-    raise AssertionError("timed out waiting for the GUI")
-
-
-@pytest.fixture
-def window(app, tmp_path: Path, monkeypatch):
-    from gui.main_window import MainWindow
-    from gui.themes.manager import ThemeManager
-
-    ini = tmp_path / "settings.ini"
-    monkeypatch.setattr(
-        AppSettings, "_store", staticmethod(lambda: QSettings(str(ini), QSettings.Format.IniFormat))
-    )
-    settings = AppSettings.load()
-    theme = ThemeManager(app, settings.theme)
-    theme.apply()
-    win = MainWindow(theme, settings)
-    win.show()
-    yield win
-    win.close()
-
-
-@pytest.fixture
-def photos(tmp_path: Path) -> Path:
-    root = tmp_path / "Photos"
-    (root / "nested" / "deeper").mkdir(parents=True)
-    save_as(gradient_image((300, 200)), root / "a.jpg", ImageFormat.JPEG, quality=98)
-    save_as(gradient_image((120, 120)), root / "nested" / "b.png", ImageFormat.PNG)
-    save_as(gradient_image((64, 64)), root / "nested" / "deeper" / "c.bmp", ImageFormat.BMP)
-    (root / "readme.txt").write_text("not an image")
-    (root / "broken.jpg").write_bytes(b"garbage")
-    return root
+from .conftest import gradient_image, save_as, wait_until  # noqa: E402
 
 
 def test_full_flow(window, photos: Path, tmp_path: Path, monkeypatch) -> None:

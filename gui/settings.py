@@ -1,6 +1,7 @@
 """Persistent user settings (QSettings, stored in the Windows registry)."""
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass, field
 
 from PySide6.QtCore import QByteArray, QSettings
@@ -33,30 +34,20 @@ class AppSettings:
         """Read settings, falling back to defaults for anything missing or invalid."""
         s = cls._store()
         out = cls()
-        try:
+        with contextlib.suppress(ValueError):
             out.mode = Mode(str(s.value("mode", out.mode.value)))
-        except ValueError:
-            pass
-        try:
+        with contextlib.suppress(ValueError):
             fmt = ImageFormat(str(s.value("target_format", out.target_format.value)))
             if fmt in OUTPUT_FORMATS:
                 out.target_format = fmt
-        except ValueError:
-            pass
-        try:
+        with contextlib.suppress(ValueError, TypeError):
             out.quality = QualityLevel(int(s.value("quality", int(out.quality))))
-        except (ValueError, TypeError):
-            pass
-        try:
+        with contextlib.suppress(ValueError):
             r, g, b = (int(c) for c in str(s.value("background", "255,255,255")).split(","))
             out.background = (r & 255, g & 255, b & 255)
-        except ValueError:
-            pass
         out.remove_metadata = bool(s.value("remove_metadata", out.remove_metadata, type=bool))
-        try:
+        with contextlib.suppress(ValueError, TypeError):
             out.workers = max(1, min(64, int(s.value("workers", out.workers))))
-        except (ValueError, TypeError):
-            pass
         theme = str(s.value("theme", SYSTEM))
         out.theme = theme if theme in PREFERENCES else SYSTEM
         out.last_dir = str(s.value("last_dir", ""))

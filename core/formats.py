@@ -1,6 +1,7 @@
 """Image format registry: supported formats, their capabilities and Pillow plugin setup."""
 from __future__ import annotations
 
+import contextlib
 import enum
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,10 +21,8 @@ except Exception:  # pragma: no cover - depends on the environment
     pass
 
 if not features.check("avif"):  # pragma: no cover - old Pillow builds
-    try:
+    with contextlib.suppress(Exception):
         import pillow_avif  # noqa: F401
-    except Exception:
-        pass
 
 
 class ImageFormat(enum.Enum):

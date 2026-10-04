@@ -7,6 +7,7 @@ On other platforms (and in tests) every function is a no-op and Qt's own handlin
 """
 from __future__ import annotations
 
+import contextlib
 import sys
 from collections.abc import Callable
 
@@ -86,10 +87,9 @@ def _enable_shadow(hwnd: int) -> None:
     class Margins(ctypes.Structure):
         _fields_ = [(name, wintypes.INT) for name in ("left", "right", "top", "bottom")]
 
-    try:
+    # no DWM (very old Windows / remote session): the shadow is cosmetic
+    with contextlib.suppress(OSError, AttributeError):
         ctypes.windll.dwmapi.DwmExtendFrameIntoClientArea(ctypes.c_void_p(hwnd), ctypes.byref(Margins(0, 0, 0, 1)))
-    except (OSError, AttributeError):  # no DWM (very old Windows / remote session): the shadow is cosmetic
-        pass
 
 
 def handle_native_event(

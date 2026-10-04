@@ -427,6 +427,11 @@ class MainWindow(QMainWindow):
             parts.append(f"уже в очереди: {self._duplicates}")
         self._info.setText(" · ".join(parts))
 
+    def _invalidate_summary(self) -> None:
+        """The queue changed: the last run's summary no longer describes it."""
+        self._summary_text = ""
+        self._last_summary = None
+
     def _info_text(self, text: str) -> None:
         self._info.setText(text)
 
@@ -533,8 +538,7 @@ class MainWindow(QMainWindow):
         self._skipped += result.skipped
         self._duplicates += result.duplicates
         if self._model.add_items(result.items):
-            self._summary_text = ""  # the old summary no longer describes the queue
-            self._last_summary = None
+            self._invalidate_summary()
         if self._pending_scans:
             pending, self._pending_scans = self._pending_scans, []
             self.add_paths(pending)
@@ -545,8 +549,7 @@ class MainWindow(QMainWindow):
             return
         self._model.clear()
         self._skipped = self._duplicates = 0
-        self._summary_text = ""
-        self._last_summary = None
+        self._invalidate_summary()
         self._session.reset()
         self._save.forget_dest()
         self._refresh_state()
@@ -564,8 +567,7 @@ class MainWindow(QMainWindow):
 
     def _remove_rows(self, rows: list[int]) -> None:
         self._model.remove_rows(rows)
-        self._summary_text = ""
-        self._last_summary = None
+        self._invalidate_summary()
         self._refresh_state()
 
     # ----- drag & drop
@@ -605,8 +607,7 @@ class MainWindow(QMainWindow):
         self._settings.save()
         self._model.clear_results()
         items = self._model.items()
-        self._summary_text = ""
-        self._last_summary = None
+        self._invalidate_summary()
         self._model.set_running(True, options.workers)
         self._info.setText(f"Обработка: {len(items)} {plural(len(items), FILES)}, потоков: {options.workers}")
         self._session.start(items, options)

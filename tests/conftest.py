@@ -1,7 +1,10 @@
 """Shared fixtures: small synthetic images and helpers to run the pipeline."""
 from __future__ import annotations
 
+import os
 import random
+import time
+from collections.abc import Callable
 from pathlib import Path, PurePath
 
 import pytest
@@ -73,3 +76,68 @@ __all__ = [
     "gradient_image", "noise_image", "save_as", "make_item", "run_one",
     "Mode", "QualityLevel", "ImageFormat", "format_info",
 ]
+
+
+# --------------------------------------------------------------------------- GUI fixtures
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+
+@pytest.fixture(scope="module")
+def app():
+    pytest.importorskip("PySide6")
+    from PySide6.QtWidgets import QApplication
+
+    instance = QApplication.instance() or QApplication(["imgforge-test"])
+    instance.setStyle("Fusion")
+    # the real app runs with the bundled fonts; layout minimums depend on their metrics
+    from gui.themes.fonts import app_font, load_fonts
+
+    load_fonts(Path(__file__).resolve().parent.parent / "assets" / "fonts")
+    instance.setFont(app_font())
+    return instance
+
+
+def wait_until(condition: Callable[[], bool], timeout: float = 60.0) -> None:
+    from PySide6.QtWidgets import QApplication
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        QApplication.processEvents()
+        if condition():
+            return
+        time.sleep(0.01)
+    raise AssertionError("timed out waiting for the GUI")
+
+
+@pytest.fixture
+def window(app, tmp_path: Path, monkeypatch):
+    from PySide6.QtCore import QSettings
+
+    from gui.main_window import MainWindow
+    from gui.settings import AppSettings
+    from gui.themes.manager import ThemeManager
+
+    ini = tmp_path / "settings.ini"
+    monkeypatch.setattr(
+        AppSettings, "_store", staticmethod(lambda: QSettings(str(ini), QSettings.Format.IniFormat))
+    )
+    settings = AppSettings.load()
+    theme = ThemeManager(app, settings.theme)
+    theme.apply()
+    win = MainWindow(theme, settings)
+    win.show()
+    yield win
+    win.close()
+
+
+@pytest.fixture
+def photos(tmp_path: Path) -> Path:
+    root = tmp_path / "Photos"
+    (root / "nested" / "deeper").mkdir(parents=True)
+    save_as(gradient_image((300, 200)), root / "a.jpg", ImageFormat.JPEG, quality=98)
+    save_as(gradient_image((120, 120)), root / "nested" / "b.png", ImageFormat.PNG)
+    save_as(gradient_image((64, 64)), root / "nested" / "deeper" / "c.bmp", ImageFormat.BMP)
+    (root / "readme.txt").write_text("not an image")
+    (root / "broken.jpg").write_bytes(b"garbage")
+    return root
