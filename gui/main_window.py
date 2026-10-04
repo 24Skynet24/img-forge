@@ -1,24 +1,18 @@
 """The main application window."""
 from __future__ import annotations
 
-import shutil
 import subprocess
-import tempfile
-import threading
-import time
 from pathlib import Path
 
-from PySide6.QtCore import QModelIndex, QPoint, Qt, QTimer, QUrl
+from PySide6.QtCore import QModelIndex, QPoint, Qt
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
-    QDesktopServices,
     QDragEnterEvent,
     QDragLeaveEvent,
     QDropEvent,
     QIcon,
     QKeySequence,
-    QPainter,
 )
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -32,79 +26,41 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from core.formats import INPUT_EXTENSIONS
 from core.models import FileResult, Summary, summarize
-from core.options import Mode, ProcessingOptions, QualityLevel
 from core.pipeline import BatchOutcome
 from core.report import format_log
-from core.saver import SaveEntry, SaveReport
+from core.saver import SaveEntry
 from core.scanner import ScanResult
-from core.utils import format_duration, format_size, plural
+from core.utils import format_size, plural
 from gui import frameless
 from gui.compare_view import CompareDialog
+from gui.formatting import (
+    FILES,
+    batch_summary_text,
+    file_filter,
+    quality_tag,
+    saved_text,
+    target_tag,
+)
+from gui.processing_session import ProcessingSession
+from gui.save_flow import SaveFlow
 from gui.settings import AppSettings
 from gui.themes.manager import ThemeManager
-from gui.widgets.conflict_dialog import ConflictDialog
 from gui.widgets.controls import ThemeSwitch
 from gui.widgets.drop_zone import DropStrip, DropZone
-from gui.widgets.kit import Btn, ElidedTx, Header, MarkWidget, Surface, Tx, col, draw_frame
+from gui.widgets.kit import Btn, ElidedTx, Header, MarkWidget, Surface, Tx
 from gui.widgets.queue_model import QueueModel
 from gui.widgets.queue_view import QueueList
+from gui.widgets.readouts import Readout, StatusDot
 from gui.widgets.run_panel import RunPanel
 from gui.widgets.settings_panel import SettingsPanel
 from gui.widgets.summary_strip import SummaryStrip
 from gui.widgets.thumbnails import ThumbnailCache
 from gui.widgets.title_bar import TitleBar
-from gui.workers import ProcessWorker, SaveWorker, ScanWorker
+from gui.workers import ScanWorker
 
 THUMB_SIZE = 36
 MIN_WIDTH, MIN_HEIGHT = 960, 640  # the designed minimum window size
-_QUALITY_TAGS = {QualityLevel.MAXIMUM: "MAX", QualityLevel.BALANCED: "BAL", QualityLevel.SMALLEST: "MIN"}
-_FILES = ("файл", "файла", "файлов")
-
-
-def _file_filter() -> str:
-    patterns = " ".join(f"*{ext}" for ext in sorted(INPUT_EXTENSIONS))
-    return f"Изображения ({patterns});;Все файлы (*.*)"
-
-
-class _Readout(Surface):
-    """``SYS.QUEUE / 024 / 214.7 MB`` cell of the top bar."""
-
-    def __init__(self, title: str, width: int, parent: QWidget | None = None) -> None:
-        super().__init__(None, left="line", parent=parent)
-        self.setFixedWidth(width)  # fixed: a changing value must never change the layout
-        self._value = ElidedTx("", 11, 700)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(14, 0, 14, 0)
-        layout.setSpacing(3)
-        layout.addStretch()
-        layout.addWidget(Tx(title, 9, tone="mute", spacing=0.1))
-        layout.addWidget(self._value)
-        layout.addStretch()
-
-    def set_value(self, text: str) -> None:
-        self._value.setText(text)
-
-
-class _StatusDot(QWidget):
-    """8 px square: empty / ink / violet / lime depending on what the app is doing."""
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setFixedSize(8, 8)
-        self._fill: str | None = None
-
-    def set_fill(self, token: str | None) -> None:
-        self._fill = token
-        self.update()
-
-    def paintEvent(self, _event) -> None:  # noqa: N802
-        p = QPainter(self)
-        if self._fill:
-            p.fillRect(self.rect(), col(self._fill))
-        draw_frame(p, self.rect(), col("ink"))
-        p.end()
 
 
 class MainWindow(QMainWindow):
@@ -127,38 +83,32 @@ class MainWindow(QMainWindow):
         self.resize(1240, 830)
 
         # State
-        self._work_dir: Path | None = None
         self._scan_worker: ScanWorker | None = None
         self._pending_scans: list[Path] = []
-        self._process_worker: ProcessWorker | None = None
-        self._save_worker: SaveWorker | None = None
-        self._last_saved_dir: Path | None = None
-        self._last_options: ProcessingOptions | None = None
         self._last_elapsed = 0.0
         self._skipped = 0
         self._duplicates = 0
         self._summary_text = ""
         self._last_summary: Summary | None = None
-        self._cancelled = False
-        self._done = 0
-        self._total = 0
-        self._bytes_done = 0
-        self._bytes_total = 0
-        self._started_at = 0.0
         self._compare_dialogs: list[CompareDialog] = []
         self._frame_ready = False
 
         self._thumbs = ThumbnailCache(THUMB_SIZE, parent=self)
         self._model = QueueModel(self._thumbs, self)
 
+        self._session = ProcessingSession(self)
+        self._session.resultReady.connect(self._on_result)
+        self._session.progress.connect(self._on_progress)
+        self._session.animationTick.connect(self._animate)
+        self._session.finished.connect(self._on_process_finished)
+        self._session.failed.connect(self._on_process_failed)
+        self._save = SaveFlow(self, settings)
+        self._save.status.connect(self._info_text)
+        self._save.started.connect(self._refresh_state)
+        self._save.finished.connect(self._on_save_finished)
+
         self._build_ui()
         self._build_actions()
-        self._timer = QTimer(self)
-        self._timer.setInterval(500)
-        self._timer.timeout.connect(self._tick)
-        self._anim = QTimer(self)
-        self._anim.setInterval(90)
-        self._anim.timeout.connect(self._animate)
         theme.changed.connect(self._on_theme_changed)
         self._on_settings_changed(save=False)
         self._on_theme_changed(theme.tokens)
@@ -178,7 +128,30 @@ class MainWindow(QMainWindow):
         self._title.maximizeRequested.connect(self._toggle_maximized)
         self._title.closeRequested.connect(self.close)
 
-        # ---- top bar
+        top = self._build_top_bar()
+        left = self._build_sources_column()
+        right = self._build_settings_column()
+        status = self._build_status_bar()
+
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+        body.addWidget(left, 1)
+        body.addWidget(right)
+
+        layout = QVBoxLayout(root)
+        layout.setContentsMargins(1, 1, 1, 1)
+        layout.setSpacing(0)
+        layout.addWidget(self._title)
+        layout.addWidget(top)
+        layout.addLayout(body, 1)
+        layout.addWidget(status)
+
+        self._btn_start = self._run.start
+        self._btn_cancel = self._run.cancel
+        self._wire_ui()
+
+    def _build_top_bar(self) -> QWidget:
         self._btn_add_files = Btn("Добавить файлы", "+")
         self._btn_add_folder = Btn("Добавить папку", "+")
         self._btn_clear = Btn("Очистить", "✕", kind="ghost")
@@ -199,9 +172,9 @@ class MainWindow(QMainWindow):
         for button in (self._btn_add_files, self._btn_add_folder, self._btn_clear):
             buttons_layout.addWidget(button)
 
-        self._ro_queue = _Readout("SYS.QUEUE", 150)
-        self._ro_out = _Readout("OUT.FMT", 112)
-        self._ro_thr = _Readout("THR", 76)
+        self._ro_queue = Readout("SYS.QUEUE", 150)
+        self._ro_out = Readout("OUT.FMT", 112)
+        self._ro_thr = Readout("THR", 76)
         self._readouts = QWidget()
         readouts_layout = QHBoxLayout(self._readouts)
         readouts_layout.setContentsMargins(0, 0, 0, 0)
@@ -228,8 +201,9 @@ class MainWindow(QMainWindow):
         top_layout.addStretch()
         top_layout.addWidget(self._readouts)
         top_layout.addWidget(theme_box)
+        return top
 
-        # ---- queue / results table
+    def _build_sources_column(self) -> QWidget:
         self._queue = QueueList(self._model)
         self._table = self._queue.view
         self._table.removeRequested.connect(self._remove_row)
@@ -268,8 +242,10 @@ class MainWindow(QMainWindow):
         left_layout.setSpacing(0)
         left_layout.addWidget(header_box)
         left_layout.addWidget(self._stack, 1)
+        return left
 
-        # ---- right column: settings (scrolls) + launch block
+    def _build_settings_column(self) -> QWidget:
+        """Settings (scrolls) + the launch block."""
         self._panel = SettingsPanel(self._settings)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -286,15 +262,10 @@ class MainWindow(QMainWindow):
         right_layout.setSpacing(0)
         right_layout.addWidget(scroll, 1)
         right_layout.addWidget(self._run)
+        return right
 
-        body = QHBoxLayout()
-        body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(0)
-        body.addWidget(left, 1)
-        body.addWidget(right)
-
-        # ---- status bar
-        self._dot = _StatusDot()
+    def _build_status_bar(self) -> QWidget:
+        self._dot = StatusDot()
         self._info = ElidedTx("", 12)
         self._btn_compare = Btn("Сравнить", "↔", kind="status", height=32, px=11)
         self._btn_log = Btn("Экспорт лога", "↓", kind="status", height=32, px=11)
@@ -310,20 +281,9 @@ class MainWindow(QMainWindow):
         status_layout.addWidget(self._info, 1)
         for button in (self._btn_compare, self._btn_log, self._btn_open, self._btn_save):
             status_layout.addWidget(button)
+        return status
 
-        layout = QVBoxLayout(root)
-        layout.setContentsMargins(1, 1, 1, 1)
-        layout.setSpacing(0)
-        layout.addWidget(self._title)
-        layout.addWidget(top)
-        layout.addLayout(body, 1)
-        layout.addWidget(status)
-
-        self._btn_start = self._run.start
-        self._btn_cancel = self._run.cancel
-        self._top_layout = top_layout
-
-        # Wiring
+    def _wire_ui(self) -> None:
         self._btn_add_files.clicked.connect(self.add_files_dialog)
         self._btn_add_folder.clicked.connect(self.add_folder_dialog)
         self._btn_clear.clicked.connect(self.clear_queue)
@@ -331,7 +291,7 @@ class MainWindow(QMainWindow):
         self._btn_cancel.clicked.connect(self.cancel_processing)
         self._btn_compare.clicked.connect(self._compare_selected)
         self._btn_save.clicked.connect(self.save_results)
-        self._btn_open.clicked.connect(self.open_saved_folder)
+        self._btn_open.clicked.connect(self._save.open_dest)
         self._btn_log.clicked.connect(self.export_log)
         self._drop_zone.addFilesRequested.connect(self.add_files_dialog)
         self._drop_zone.addFolderRequested.connect(self.add_folder_dialog)
@@ -417,11 +377,11 @@ class MainWindow(QMainWindow):
 
     @property
     def running(self) -> bool:
-        return self._process_worker is not None
+        return self._session.running
 
     @property
     def saving(self) -> bool:
-        return self._save_worker is not None
+        return self._save.active
 
     def _refresh_state(self) -> None:
         has_items = self._model.rowCount() > 0
@@ -433,7 +393,7 @@ class MainWindow(QMainWindow):
         self._run.set_running(self.running)
         self._btn_save.setEnabled(has_results and not busy)
         self._btn_log.setEnabled(bool(results) and not busy)
-        self._btn_open.setEnabled(self._last_saved_dir is not None and self._last_saved_dir.exists())
+        self._btn_open.setEnabled(self._save.dest is not None and self._save.dest.exists())
         self._btn_clear.setEnabled(has_items and not busy)
         self._btn_add_files.setEnabled(not self.running)
         self._btn_add_folder.setEnabled(not self.running)
@@ -457,7 +417,7 @@ class MainWindow(QMainWindow):
             n = self._model.rowCount()
             if n:
                 parts.append(
-                    f"{n} {plural(n, _FILES)} · {format_size(self._model.total_source_size())} · готово к запуску"
+                    f"{n} {plural(n, FILES)} · {format_size(self._model.total_source_size())} · готово к запуску"
                 )
             else:
                 parts.append("Очередь пуста")
@@ -467,8 +427,8 @@ class MainWindow(QMainWindow):
             parts.append(f"уже в очереди: {self._duplicates}")
         self._info.setText(" · ".join(parts))
 
-    def _percent(self) -> int:
-        return 100 * self._done // self._total if self._total else 0
+    def _info_text(self, text: str) -> None:
+        self._info.setText(text)
 
     def _update_chrome(self) -> None:
         """Title bar, /01 header, top-bar readouts, /04 info and the status dot."""
@@ -476,22 +436,22 @@ class MainWindow(QMainWindow):
         size = format_size(self._model.total_source_size())
         options = self._panel.options()
         summary = self._last_summary
-        files = plural(n, _FILES)
+        files = plural(n, FILES)
 
         if self.running:
-            title = f"— обработка {self._percent()}%"
-            source = f"ОБРАБОТКА {self._done} / {self._total}"
-            start = f"THR {self._busy_threads(options)} / {options.workers}"
+            title = f"— обработка {self._session.percent}%"
+            source = f"ОБРАБОТКА {self._session.done} / {self._session.total}"
+            start = f"THR {self._session.busy_threads(options)} / {options.workers}"
             dot: str | None = "violet"
         elif summary is not None:
-            title = f"— готово · {self._saved_text(summary)}"
+            title = f"— готово · {saved_text(summary)}"
             source = f"ГОТОВО {summary.ok + summary.already_optimized} / {summary.total} · ERR {summary.errors:02d}"
             start = f"ПОВТОР · {n:03d} {files.upper()}"
             dot = "lime"
         elif n:
             title = f"— {n} {files} · {size}"
             source = f"FILES {n:03d} · {size} · DIRS {self._model.folder_count()}"
-            start = f"{n:03d} {files.upper()} → {self._target_tag(options)}"
+            start = f"{n:03d} {files.upper()} → {target_tag(options)}"
             dot = "ink"
         else:
             title, source, start, dot = "", "FILES 000 · DEPTH —", "НЕТ ФАЙЛОВ", None
@@ -503,30 +463,14 @@ class MainWindow(QMainWindow):
         self._run.set_info(start)
         self._dot.set_fill(dot)
 
-        out = self._target_tag(options)
+        out = target_tag(options)
         self._ro_queue.set_value(f"{n:03d} / {size}" if n else "000 / 0 Б")
-        self._ro_out.set_value(f"{out} · {self._quality_tag(options)}")
+        self._ro_out.set_value(f"{out} · {quality_tag(options)}")
         self._ro_thr.set_value(
-            f"{self._busy_threads(options)} / {options.workers}" if self.running else str(options.workers)
+            f"{self._session.busy_threads(options)} / {options.workers}" if self.running else str(options.workers)
         )
         self._drop_zone.set_readout(f"OUT → {out} · THR {options.workers}")
         self._drop_strip.set_count(f"{n:03d} В ОЧЕРЕДИ")
-
-    def _busy_threads(self, options: ProcessingOptions) -> int:
-        return max(1, min(options.workers, self._total - self._done))
-
-    @staticmethod
-    def _saved_text(summary: Summary) -> str:
-        pct = summary.saved_percent
-        return f"−{pct:.1f}%" if pct >= 0 else f"+{abs(pct):.1f}%"
-
-    @staticmethod
-    def _target_tag(options: ProcessingOptions) -> str:
-        return "ИСХ." if options.mode is Mode.COMPRESS else options.target_format.value
-
-    @staticmethod
-    def _quality_tag(options: ProcessingOptions) -> str:
-        return "—" if options.mode is Mode.CONVERT else _QUALITY_TAGS[options.quality]
 
     def _on_theme_changed(self, tokens) -> None:
         self._theme_switch.set_dark(self._theme.is_dark)
@@ -553,7 +497,7 @@ class MainWindow(QMainWindow):
         if self.running:
             return
         files, _ = QFileDialog.getOpenFileNames(
-            self, "Выберите изображения", self._settings.last_dir, _file_filter()
+            self, "Выберите изображения", self._settings.last_dir, file_filter()
         )
         if files:
             self._settings.last_dir = str(Path(files[0]).parent)
@@ -600,12 +544,11 @@ class MainWindow(QMainWindow):
         if self.running or self.saving:
             return
         self._model.clear()
-        self._cleanup_work_dir()
         self._skipped = self._duplicates = 0
         self._summary_text = ""
         self._last_summary = None
-        self._total = self._done = 0
-        self._last_saved_dir = None
+        self._session.reset()
+        self._save.forget_dest()
         self._refresh_state()
 
     def remove_selected(self) -> None:
@@ -660,167 +603,69 @@ class MainWindow(QMainWindow):
         options = self._panel.options()
         self._settings.update_from(options)
         self._settings.save()
-        self._last_options = options
-        self._cleanup_work_dir()
-        self._work_dir = Path(tempfile.mkdtemp(prefix="imgforge_"))
         self._model.clear_results()
         items = self._model.items()
         self._summary_text = ""
         self._last_summary = None
-        self._cancelled = False
-        self._total, self._done = len(items), 0
-        self._bytes_total = sum(i.size for i in items) or 1
-        self._bytes_done = 0
-        self._started_at = time.monotonic()
-        worker = ProcessWorker(items, options, self._work_dir, self)
-        worker.resultReady.connect(self._on_result)
-        worker.finishedAll.connect(self._on_process_finished)
-        worker.failed.connect(self._on_process_failed)
-        self._process_worker = worker
         self._model.set_running(True, options.workers)
-        self._info.setText(f"Обработка: {self._total} {plural(self._total, _FILES)}, потоков: {options.workers}")
-        self._timer.start()
-        self._anim.start()
-        self._tick()
-        worker.start()
+        self._info.setText(f"Обработка: {len(items)} {plural(len(items), FILES)}, потоков: {options.workers}")
+        self._session.start(items, options)
         self._refresh_state()
 
     def cancel_processing(self) -> None:
-        if self._process_worker is not None:
-            self._cancelled = True
-            self._process_worker.cancel()
+        if self.running:
+            self._session.cancel()
             self._btn_cancel.setEnabled(False)
             self._info.setText("Отмена… дожидаемся завершения файлов в работе")
 
     def _on_result(self, result: FileResult) -> None:
         self._model.set_result(result.index, result)
-        self._done += 1
-        self._bytes_done += result.source.size
-        self._update_progress()
         self._update_chrome()
 
     def _animate(self) -> None:
         self._table.advance()
         self._run.advance()
 
-    def _tick(self) -> None:
-        if self.running:
-            self._update_progress()
-
-    def _update_progress(self) -> None:
-        options = self._last_options
-        elapsed = time.monotonic() - self._started_at
-        fraction = self._bytes_done / self._bytes_total
-        threads = self._busy_threads(options) if options else 0
-        meta = f"THR {threads}/{options.workers if options else 0} · {format_duration(elapsed)}"
-        if fraction >= 0.02 and self._done < self._total:
-            meta += f" · ETA {format_duration(elapsed * (1 - fraction) / fraction)}"
-        inflight = min(options.workers if options else 1, self._total - self._done)
-        self._run.set_progress(self._done, self._total, inflight, meta)
+    def _on_progress(self, done: int, total: int, inflight: int, meta: str) -> None:
+        self._run.set_progress(done, total, inflight, meta)
 
     def _on_process_finished(self, outcome: BatchOutcome) -> None:
-        self._finish_worker()
+        self._end_run()
         self._last_elapsed = outcome.elapsed
         s = summarize(outcome.results)
         self._last_summary = s
-        head = (
-            f"Отменено: обработано {s.total} из {self._total}"
-            if outcome.cancelled
-            else f"Готово: {s.ok + s.already_optimized} из {s.total}"
-        )
-        tail = f" · ошибок: {s.errors}" if s.errors else ""
-        self._summary_text = (
-            f"{head}{tail} · сэкономлено {format_size(s.saved_bytes)} ({s.saved_percent:.1f}%)"
-        )
+        self._summary_text = batch_summary_text(s, self._session.total, outcome.cancelled)
         self._summary_strip.set_summary(s, outcome.elapsed)
         self._refresh_state()
 
     def _on_process_failed(self, message: str) -> None:
-        self._finish_worker()
+        self._end_run()
         self._summary_text = f"Обработка прервана: {message}"
         self._refresh_state()
 
-    def _finish_worker(self) -> None:
-        worker, self._process_worker = self._process_worker, None
-        self._timer.stop()
-        self._anim.stop()
+    def _end_run(self) -> None:
         self._model.set_running(False)
         self._btn_cancel.setEnabled(True)
-        if worker is not None:
-            worker.wait()
-            worker.deleteLater()
 
     # ================================================================== saving
 
     def save_results(self) -> None:
         if self.running or self.saving:
             return
-        entries = [
+        self._save.start([
             SaveEntry(r.output_path, r.relative_output)
             for r in self._model.results()
             if r.ok and r.output_path is not None and r.relative_output is not None
-        ]
-        if not entries:
-            return
-        dest = QFileDialog.getExistingDirectory(
-            self, "Куда сохранить результат", self._settings.last_dir
-        )
-        if not dest:
-            return
-        self._settings.last_dir = dest
-        self._settings.save()
-        self._last_saved_dir = Path(dest)
-        worker = SaveWorker(entries, Path(dest), self)
-        worker.progress.connect(lambda done, total: self._info.setText(f"Сохранение… {done} / {total}"))
-        worker.conflict.connect(self._on_conflict)
-        worker.finishedSave.connect(self._on_save_finished)
-        self._save_worker = worker
-        self._info.setText("Сохранение…")
-        worker.start()
-        self._refresh_state()
+        ])
 
-    def _on_conflict(self, path: str, is_folder: bool) -> None:
-        dialog = ConflictDialog(Path(path), is_folder, self)
-        dialog.exec()
-        if self._save_worker is not None:
-            self._save_worker.answer(dialog.action, dialog.apply_to_all)
-
-    def _on_save_finished(self, report: SaveReport) -> None:
-        worker, self._save_worker = self._save_worker, None
-        if worker is not None:
-            worker.wait()
-            worker.deleteLater()
-        extra = []
-        if report.renamed:
-            extra.append(f"переименовано: {report.renamed}")
-        if report.skipped:
-            extra.append(f"пропущено: {report.skipped}")
-        if report.errors:
-            extra.append(f"ошибок: {len(report.errors)}")
-        text = f"Сохранено файлов: {report.saved} → {self._last_saved_dir}"
-        if extra:
-            text += f" ({', '.join(extra)})"
+    def _on_save_finished(self, text: str) -> None:
         self._summary_text = text
         self._refresh_state()
-        box = QMessageBox(self)
-        box.setWindowTitle("Сохранение завершено")
-        box.setIcon(QMessageBox.Icon.Warning if report.errors else QMessageBox.Icon.Information)
-        box.setText(text)
-        if report.errors:
-            box.setDetailedText("\n".join(f"{p}: {e}" for p, e in report.errors))
-        open_button = box.addButton("Открыть папку", QMessageBox.ButtonRole.AcceptRole)
-        box.addButton("Закрыть", QMessageBox.ButtonRole.RejectRole)
-        box.exec()
-        if box.clickedButton() is open_button:
-            self.open_saved_folder()
-
-    def open_saved_folder(self) -> None:
-        if self._last_saved_dir is not None and self._last_saved_dir.exists():
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._last_saved_dir)))
 
     def export_log(self) -> None:
         results = self._model.results()
-        if not results or self._last_options is None:
+        options = self._session.options
+        if not results or options is None:
             return
         path, _ = QFileDialog.getSaveFileName(
             self, "Экспорт лога", str(Path(self._settings.last_dir or ".") / "imgforge-log.txt"),
@@ -829,7 +674,7 @@ class MainWindow(QMainWindow):
         if not path:
             return
         try:
-            Path(path).write_text(format_log(results, self._last_options, self._last_elapsed), encoding="utf-8")
+            Path(path).write_text(format_log(results, options, self._last_elapsed), encoding="utf-8")
         except OSError as exc:
             QMessageBox.warning(self, "Экспорт лога", f"Не удалось записать файл:\n{exc}")
 
@@ -889,15 +734,6 @@ class MainWindow(QMainWindow):
 
     # ================================================================== lifecycle
 
-    def _cleanup_work_dir(self, wait: bool = False) -> None:
-        work_dir, self._work_dir = self._work_dir, None
-        if work_dir is None:
-            return
-        if wait:
-            shutil.rmtree(work_dir, ignore_errors=True)
-        else:
-            threading.Thread(target=shutil.rmtree, args=(work_dir, True), daemon=True).start()
-
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         if self.running:
             answer = QMessageBox.question(
@@ -907,12 +743,8 @@ class MainWindow(QMainWindow):
             if answer != QMessageBox.StandardButton.Yes:
                 event.ignore()
                 return
-            assert self._process_worker is not None
-            self._process_worker.cancel()
-            self._process_worker.wait()
-        if self._save_worker is not None:
-            self._save_worker.cancel()
-            self._save_worker.wait()
+            self._session.stop_and_wait()
+        self._save.cancel_and_wait()
         if self._scan_worker is not None:
             self._scan_worker.requestInterruption()
             self._scan_worker.wait()
@@ -920,5 +752,5 @@ class MainWindow(QMainWindow):
             dialog.close()
         self._settings.geometry = self.saveGeometry()
         self._settings.save()
-        self._cleanup_work_dir(wait=True)
+        self._session.discard_outputs(wait=True)
         super().closeEvent(event)

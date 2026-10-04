@@ -109,7 +109,7 @@ def test_full_flow(window, photos: Path, tmp_path: Path, monkeypatch) -> None:
     dest = tmp_path / "dest"
     (dest / "Photos").mkdir(parents=True)
     monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *a, **k: str(dest))
-    from gui import main_window as mw
+    from gui import save_flow as mw
 
     class AutoRename:
         def __init__(self, *_a, **_k) -> None:
@@ -151,7 +151,7 @@ def test_cancel_keeps_finished_results(window, tmp_path: Path) -> None:
     wait_until(lambda: window._model.rowCount() == 30 and window._scan_worker is None)
     window._panel._workers.setValue(2)
     window.start_processing()
-    wait_until(lambda: window._done >= 1)
+    wait_until(lambda: window._session.done >= 1)
     window.cancel_processing()
     wait_until(lambda: not window.running)
     assert 1 <= len(window._model.results()) < 30
