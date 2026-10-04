@@ -5,12 +5,8 @@ from pathlib import Path
 
 from PIL import Image
 
-from core.converter import (
-    EXIF_ORIENTATION,
-    to_working_mode,
-    apply_orientation,
-    to_srgb,
-)
+from core.color import to_srgb, to_working_mode
+from core.converter import EXIF_ORIENTATION, apply_orientation
 
 
 def _load_upright_rgba(path: Path, *, max_side: int | None, colour_managed: bool) -> Image.Image:

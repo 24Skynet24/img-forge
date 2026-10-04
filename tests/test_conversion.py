@@ -136,7 +136,7 @@ def test_exotic_pixel_modes_do_not_crash(tmp_path: Path, work_dir: Path, mode, t
     "mode", ["1", "L", "LA", "La", "P", "PA", "RGB", "RGBA", "RGBa", "RGBX", "CMYK", "I;16", "I", "F", "YCbCr", "LAB", "HSV"]
 )
 def test_working_mode_normalisation(mode: str) -> None:
-    from core.converter import to_working_mode
+    from core.color import to_working_mode
 
     try:
         img = Image.new(mode, (4, 4))
